@@ -6,6 +6,7 @@ from event_radar.collectors.happening_sonoma import HappeningSonomaCollector
 from event_radar.collectors.sonoma_county import SonomaCountyCollector
 from event_radar.config import settings
 from event_radar.models.event import Event
+from event_radar.models.weather import WeatherLocation, WeekendWeather
 from event_radar.services.direction_store import (
     clear_temporary_directions,
     load_offset,
@@ -23,6 +24,14 @@ from event_radar.services.telegram import TelegramClient
 from event_radar.services.telegram_updates import (
     TelegramUpdateClient,
     parse_direction,
+)
+from event_radar.services.weather import (
+    OpenMeteoWeatherClient,
+    WeatherProviderError,
+    filter_weather_to_window,
+    forecast_dates_for_window,
+    format_weather_diagnostics,
+    format_weekend_weather,
 )
 from event_radar.services.weekend import upcoming_weekend_window
 
@@ -70,6 +79,22 @@ def format_directions() -> str:
     return "\n".join(lines)
 
 
+async def fetch_baseline_weather(
+    client: OpenMeteoWeatherClient,
+    location: WeatherLocation,
+    start: datetime,
+    end: datetime,
+) -> WeekendWeather | None:
+    """Fetch weather without making a provider outage suppress the event digest."""
+    forecast_start, forecast_end = forecast_dates_for_window(start, end, location)
+    try:
+        weather = await client.get_forecast(location, forecast_start, forecast_end)
+    except WeatherProviderError as exc:
+        print(f"Weather unavailable: {exc}")
+        return None
+    return filter_weather_to_window(weather, start, end)
+
+
 async def run() -> None:
     now = datetime.now(PACIFIC_TIME)
     start, end = upcoming_weekend_window(now)
@@ -82,19 +107,36 @@ async def run() -> None:
         user_agent=settings.user_agent,
         timeout_seconds=settings.request_timeout_seconds,
     )
-    sonoma_county_events, happening_sonoma_events = await asyncio.gather(
+    weather_location = WeatherLocation(
+        name=settings.weather_location_name,
+        latitude=settings.weather_latitude,
+        longitude=settings.weather_longitude,
+        timezone=settings.weather_timezone,
+    )
+    weather_client = OpenMeteoWeatherClient(
+        user_agent=settings.user_agent,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    sonoma_county_events, happening_sonoma_events, weather = await asyncio.gather(
         sonoma_county_collector.collect(start=start, end=end),
         happening_sonoma_collector.collect(start=start, end=end),
+        fetch_baseline_weather(weather_client, weather_location, start, end),
     )
     deduplication = deduplicate_events([*sonoma_county_events, *happening_sonoma_events])
     selection = select_event_candidates(deduplication.events, start=start, end=end)
     events = selection.events
     print(format_selection_diagnostics(selection))
+    if weather is not None:
+        print(format_weather_diagnostics(weather))
 
     message_parts = [
         "Event Radar",
         "",
         format_directions(),
+        "",
+        "--------------------",
+        "",
+        format_weekend_weather(weather),
         "",
         "--------------------",
         "",
