@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import httpx
+
 from event_radar.collectors.happening_sonoma import HappeningSonomaCollector
 from event_radar.collectors.sonoma_county import SonomaCountyCollector
 from event_radar.config import settings
@@ -20,6 +22,13 @@ from event_radar.services.event_evaluation import (
     format_selection_diagnostics,
     select_event_candidates,
 )
+from event_radar.services.hike_catalog import HikeCatalogRepository
+from event_radar.services.hike_suitability import (
+    build_hike_candidate_selection,
+    format_hike_candidates,
+    format_hike_diagnostics,
+)
+from event_radar.services.hike_weather import collect_trailhead_weather
 from event_radar.services.telegram import TelegramClient
 from event_radar.services.telegram_updates import (
     TelegramUpdateClient,
@@ -113,21 +122,50 @@ async def run() -> None:
         longitude=settings.weather_longitude,
         timezone=settings.weather_timezone,
     )
-    weather_client = OpenMeteoWeatherClient(
-        user_agent=settings.user_agent,
-        timeout_seconds=settings.request_timeout_seconds,
-    )
-    sonoma_county_events, happening_sonoma_events, weather = await asyncio.gather(
-        sonoma_county_collector.collect(start=start, end=end),
-        happening_sonoma_collector.collect(start=start, end=end),
-        fetch_baseline_weather(weather_client, weather_location, start, end),
-    )
+    hike_catalog = HikeCatalogRepository(settings.hike_catalog_path).load()
+    async with httpx.AsyncClient() as weather_http_client:
+        weather_client = OpenMeteoWeatherClient(
+            user_agent=settings.user_agent,
+            timeout_seconds=settings.request_timeout_seconds,
+            client=weather_http_client,
+        )
+        (
+            sonoma_county_events,
+            happening_sonoma_events,
+            weather,
+            hike_weather,
+        ) = await asyncio.gather(
+            sonoma_county_collector.collect(start=start, end=end),
+            happening_sonoma_collector.collect(start=start, end=end),
+            fetch_baseline_weather(weather_client, weather_location, start, end),
+            collect_trailhead_weather(
+                hike_catalog.hikes,
+                weather_client,
+                start,
+                end,
+                timezone=settings.weather_timezone,
+            ),
+        )
+
     deduplication = deduplicate_events([*sonoma_county_events, *happening_sonoma_events])
     selection = select_event_candidates(deduplication.events, start=start, end=end)
+    hike_selection = build_hike_candidate_selection(
+        hike_catalog.hikes,
+        hike_weather,
+        start,
+        end,
+        timezone=settings.weather_timezone,
+    )
     events = selection.events
     print(format_selection_diagnostics(selection))
     if weather is not None:
         print(format_weather_diagnostics(weather))
+    print(
+        format_hike_diagnostics(
+            hike_selection,
+            catalog_size=len(hike_catalog.hikes),
+        )
+    )
 
     message_parts = [
         "Event Radar",
@@ -137,6 +175,10 @@ async def run() -> None:
         "--------------------",
         "",
         format_weekend_weather(weather),
+        "",
+        "--------------------",
+        "",
+        format_hike_candidates(hike_selection),
         "",
         "--------------------",
         "",

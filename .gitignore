@@ -20,7 +20,8 @@ __pycache__/
 Thumbs.db
 
 # Local data
-data/
+data/*
+!data/hikes.json
 *.db
 *.sqlite
 *.sqlite3
