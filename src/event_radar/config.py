@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: str | None = None
+    telegram_owner_user_id: int | None = None
 
     request_timeout_seconds: float = 20.0
     user_agent: str = "EventRadar/0.1"

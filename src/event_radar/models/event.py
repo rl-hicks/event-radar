@@ -4,6 +4,14 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, HttpUrl
 
 
+class EventSource(BaseModel):
+    """Provenance for an additional source matched to an event."""
+
+    source_name: str = Field(min_length=1)
+    source_id: str | None = None
+    source_url: HttpUrl
+
+
 class Event(BaseModel):
     """A normalized event gathered from an external source."""
 
@@ -25,6 +33,8 @@ class Event(BaseModel):
 
     price_min: Decimal | None = Field(default=None, ge=0)
     price_max: Decimal | None = Field(default=None, ge=0)
+
+    alternate_sources: list[EventSource] = Field(default_factory=list)
 
     def is_free(self) -> bool:
         return self.price_min == Decimal("0")
