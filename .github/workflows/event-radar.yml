@@ -1,0 +1,148 @@
+name: Event Radar
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: event-radar-production
+  cancel-in-progress: false
+
+jobs:
+  production:
+    name: Run Event Radar
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out public application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out private runtime state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rl-hicks/event-radar-state
+          ref: main
+          token: ${{ secrets.EVENT_RADAR_STATE_TOKEN }}
+          path: .private-state
+          persist-credentials: true
+
+      - name: Materialize private runtime files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_files=(
+            config/user_context.json
+            state/telegram_offset.json
+            state/permanent_directions.json
+            state/temporary_directions.json
+          )
+          for path in "${required_files[@]}"; do
+            if [[ ! -s ".private-state/${path}" ]]; then
+              echo "::error::Required private runtime file is missing or empty: ${path}"
+              exit 1
+            fi
+          done
+
+          install -d -m 700 config state
+          install -m 600 .private-state/config/user_context.json config/user_context.json
+          install -m 600 .private-state/state/telegram_offset.json state/telegram_offset.json
+          install -m 600 .private-state/state/permanent_directions.json state/permanent_directions.json
+          install -m 600 .private-state/state/temporary_directions.json state/temporary_directions.json
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Validate production secret configuration
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_OWNER_USER_ID: ${{ secrets.TELEGRAM_OWNER_USER_ID }}
+        run: |
+          set -euo pipefail
+
+          required_secrets=(
+            OPENAI_API_KEY
+            TELEGRAM_BOT_TOKEN
+            TELEGRAM_CHAT_ID
+            TELEGRAM_OWNER_USER_ID
+          )
+          for name in "${required_secrets[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required production secret is not configured: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Run Event Radar
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_OWNER_USER_ID: ${{ secrets.TELEGRAM_OWNER_USER_ID }}
+        run: uv run event-radar
+
+      - name: Copy updated state to private checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_state=(
+            state/telegram_offset.json
+            state/permanent_directions.json
+            state/temporary_directions.json
+          )
+          for path in "${required_state[@]}"; do
+            if [[ ! -s "${path}" ]]; then
+              echo "::error::Updated runtime state is missing or empty: ${path}"
+              exit 1
+            fi
+          done
+
+          install -m 600 state/telegram_offset.json .private-state/state/telegram_offset.json
+          install -m 600 state/permanent_directions.json .private-state/state/permanent_directions.json
+          install -m 600 state/temporary_directions.json .private-state/state/temporary_directions.json
+
+      - name: Commit and push private state
+        shell: bash
+        working-directory: .private-state
+        run: |
+          set -euo pipefail
+
+          state_files=(
+            state/telegram_offset.json
+            state/permanent_directions.json
+            state/temporary_directions.json
+          )
+
+          if git diff --quiet -- "${state_files[@]}"; then
+            echo "No Event Radar state changes to persist."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${state_files[@]}"
+          git commit -m "Update Event Radar state"
+          git push origin HEAD:main

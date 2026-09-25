@@ -12,6 +12,10 @@ __pycache__/
 .env
 config/user_context.json
 
+# Private production state checkout and materialized runtime state
+.private-state/
+state/*.json
+
 # Generated decision packets
 output/
 
