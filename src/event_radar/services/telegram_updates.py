@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import TypeGuard
 
 import httpx
 
@@ -69,7 +70,18 @@ def parse_direction(
 
     user_id = sender.get("id")
 
-    if not isinstance(user_id, int):
+    if not _is_telegram_id(user_id):
+        return None
+
+    chat = message.get("chat")
+
+    if not isinstance(chat, dict):
+        return None
+
+    chat_id = chat.get("id")
+    chat_type = chat.get("type")
+
+    if not _is_telegram_id(chat_id) or not isinstance(chat_type, str):
         return None
 
     update_id = update.get("update_id")
@@ -82,8 +94,7 @@ def parse_direction(
     if not separator or not instruction.strip():
         return None
 
-    # Telegram group commands may look like:
-    # /temp@robot_event_radar_bot
+    # Telegram may include the bot username in an addressed command token.
     command = command.split("@", maxsplit=1)[0].lower()
 
     if command == "/temp":
@@ -97,6 +108,30 @@ def parse_direction(
         type=direction_type,
         text=instruction.strip(),
         telegram_user_id=user_id,
+        telegram_chat_id=chat_id,
+        telegram_chat_type=chat_type,
         created_at=datetime.now(UTC),
         update_id=update_id,
     )
+
+
+def is_authorized_owner_direction(
+    direction: Direction,
+    *,
+    owner_user_id: int | None,
+    owner_chat_id: str | int | None,
+) -> bool:
+    """Require the configured owner identity in the configured private chat."""
+    if owner_user_id is None or owner_chat_id is None:
+        return False
+    if direction.telegram_chat_type != "private":
+        return False
+    if direction.telegram_chat_id is None:
+        return False
+    return direction.telegram_user_id == owner_user_id and str(direction.telegram_chat_id) == str(
+        owner_chat_id
+    )
+
+
+def _is_telegram_id(value: object) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool)

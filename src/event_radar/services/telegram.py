@@ -14,7 +14,8 @@ class TelegramClient:
         chat_id: str,
         timeout_seconds: float = 20.0,
     ) -> None:
-        self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        self._message_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        self._document_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
         self._chat_id = chat_id
         self._timeout = timeout_seconds
 
@@ -22,7 +23,7 @@ class TelegramClient:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             for chunk in split_telegram_message(message):
                 response = await client.post(
-                    self._url,
+                    self._message_url,
                     json={
                         "chat_id": self._chat_id,
                         "text": chunk,
@@ -34,6 +35,26 @@ class TelegramClient:
                     raise TelegramError(
                         f"Telegram returned {response.status_code}: {response.text}"
                     )
+
+    async def send_document(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        caption: str | None = None,
+    ) -> None:
+        """Upload one in-memory Markdown decision packet as a Telegram document."""
+        data = {"chat_id": self._chat_id}
+        if caption is not None:
+            data["caption"] = caption
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                self._document_url,
+                data=data,
+                files={"document": (filename, content, "text/markdown")},
+            )
+        if response.is_error:
+            raise TelegramError(f"Telegram returned {response.status_code}: {response.text}")
 
 
 def split_telegram_message(

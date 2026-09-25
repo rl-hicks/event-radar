@@ -1,0 +1,83 @@
+{
+  "profile_id": "example-profile",
+  "profile_label": "Example local explorer",
+  "base_location": {
+    "name": "Example City, CA",
+    "latitude": 38.0,
+    "longitude": -122.0,
+    "timezone": "America/Los_Angeles"
+  },
+  "core_objective": "Find worthwhile weekend experiences while preserving meaningful choice.",
+  "action_posture": [
+    "Prefer doing something when a genuinely worthwhile option exists.",
+    "Do not retain filler merely to increase recommendation count."
+  ],
+  "social_posture": {
+    "objective": "Value activities with natural, structured interaction while preserving standalone value.",
+    "interaction_architecture_signals": ["structured participation", "circulation", "shared activities"],
+    "safeguards": ["Do not infer demographics.", "Do not equate crowd size with social value."]
+  },
+  "peer_context": {
+    "approximate_min_age": 25,
+    "approximate_max_age": 40,
+    "soft_signal_only": true,
+    "restrictions": ["Do not invent attendee ages or relationship status."]
+  },
+  "meeting_people_posture": [
+    "Natural interaction is useful, but every option must remain worthwhile without it."
+  ],
+  "drive_tolerance": [
+    {"maximum_minutes": 30, "posture": "low friction"},
+    {"maximum_minutes": 60, "posture": "requires stronger payoff"},
+    {"maximum_minutes": null, "posture": "destination options must be exceptional"}
+  ],
+  "cost_tolerance": [
+    {"maximum_dollars": 25, "posture": "low friction"},
+    {"maximum_dollars": 100, "posture": "viable when justified"},
+    {"maximum_dollars": null, "posture": "requires exceptional payoff"}
+  ],
+  "solo_attendance": {
+    "concerts": "moderate",
+    "markets": "mild",
+    "classes": "none",
+    "hikes": "none"
+  },
+  "nightlife_posture": ["Nightlife is conditional on a worthwhile event or social structure."],
+  "crowd_posture": ["Healthy circulation can help; overcrowding has diminishing returns."],
+  "hiking_posture": {
+    "desired_difficulties": ["easy", "moderate", "hard"],
+    "normal_profile": "moderate",
+    "local_regional_default": "Prefer regional hikes for ordinary weekends.",
+    "destination_posture": "Preserve destination hikes when their payoff is distinctive."
+  },
+  "schedule_anchors": [
+    {
+      "id": "saturday-exercise",
+      "day_of_week": "saturday",
+      "start_time": "08:00:00",
+      "end_time": "12:00:00",
+      "strength": "soft",
+      "description": "Saturday morning is usually reserved for a recurring exercise commitment.",
+      "displacement_policy": "Only unusually strong or time-sensitive opportunities should displace it."
+    }
+  ],
+  "category_priors": {
+    "workshops": {"strength": "strong", "notes": "Structured participation is valuable."},
+    "outdoors": {"strength": "strong", "notes": "Active regional exploration is valuable."},
+    "music": {"strength": "positive", "notes": "Stronger when the setting supports interaction."},
+    "nightlife": {"strength": "conditional", "notes": "Needs event or experiential substance."}
+  },
+  "output_preferences": {
+    "normal_target_minimum": 12,
+    "normal_target_maximum": 16,
+    "absolute_maximum": 18,
+    "quota_is_required": false,
+    "rigid_itinerary": false,
+    "posture": "Return a broad but high-signal decision set for later conversation."
+  },
+  "anti_objectives": [
+    "Do not optimize for volume.",
+    "Do not construct a rigid itinerary.",
+    "Do not treat deterministic score as ground truth."
+  ]
+}

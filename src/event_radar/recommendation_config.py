@@ -474,7 +474,7 @@ class RecommendationScoringConfig:
     """
 
     # Candidate-set controls.
-    maximum_candidates: int = 22
+    maximum_candidates: int = 28
     minimum_score: int = 5
 
     # Light diversity controls.

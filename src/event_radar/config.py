@@ -19,6 +19,13 @@ class Settings(BaseSettings):
 
     hike_catalog_path: Path = Path("data/hikes.json")
 
+    user_context_path: Path = Path("config/user_context.json")
+    openai_api_key: SecretStr | None = None
+    openai_model: str = "gpt-5.6"
+    openai_timeout_seconds: float = Field(default=120.0, gt=0)
+    curation_prompt_path: Path = Path("prompts/weekend_curation.md")
+    curation_output_dir: Path = Path("output")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
