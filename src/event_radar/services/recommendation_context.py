@@ -11,6 +11,8 @@ from event_radar.models.curation import (
     EventProvenanceContext,
     HikeCandidateContext,
     HikeWeatherContext,
+    ImportantUnknown,
+    ImportantUnknownKind,
     RecommendationContext,
 )
 from event_radar.models.direction import Direction
@@ -47,21 +49,12 @@ def build_recommendation_context(
         _hike_context(candidate)
         for candidate in hike_selection.candidates[: config.maximum_hike_candidates]
     ]
-    known_unknowns = [
-        "Event price is unknown unless explicit source price fields are present.",
-        "Travel time is unknown; no drive-time service is active.",
-        "Attendance, demographics, popularity, and gender composition are unknown.",
-        "Hike access, closures, reservations, parking availability, tides, and surf are "
-        "not verified.",
-        "Recent precipitation and current trail mud conditions are unknown.",
-    ]
-    if baseline_weather is None:
-        known_unknowns.append("Regional baseline weather is unavailable for this run.")
-    if hike_selection.weather_location_failures:
-        known_unknowns.append(
-            "Trailhead forecasts failed for "
-            f"{hike_selection.weather_location_failures} location(s)."
-        )
+    known_unknowns = _known_unknowns(
+        event_candidates=event_candidates,
+        hike_candidates=hike_candidates,
+        baseline_weather=baseline_weather,
+        hike_weather_failures=hike_selection.weather_location_failures,
+    )
 
     return RecommendationContext(
         generated_at=generated_at,
@@ -116,6 +109,8 @@ def _event_context(
         activity_type=evaluation.activity_type,
         price_min=event.price_min,
         price_max=event.price_max,
+        price_currency=event.price_currency,
+        price_details=event.price_details,
         source_name=event.source_name,
         source_id=event.source_id,
         source_url=event.source_url,
@@ -198,6 +193,87 @@ def _weather_context(weather: WeekendWeather | None) -> BaselineWeatherContext |
             for day in weather.days
         ],
     )
+
+
+def _known_unknowns(
+    *,
+    event_candidates: list[EventCandidateContext],
+    hike_candidates: list[HikeCandidateContext],
+    baseline_weather: WeekendWeather | None,
+    hike_weather_failures: int,
+) -> list[ImportantUnknown]:
+    unknowns: list[ImportantUnknown] = []
+    if any(event.price_min is None and event.price_max is None for event in event_candidates):
+        unknowns.append(
+            ImportantUnknown(
+                kind=ImportantUnknownKind.EVENT_PRICE,
+                detail="Event prices remain unknown where source data does not provide them.",
+            )
+        )
+    if event_candidates or hike_candidates:
+        unknowns.extend(
+            [
+                ImportantUnknown(
+                    kind=ImportantUnknownKind.TRAVEL_TIME,
+                    detail="Travel times are not calculated; no routing service is active.",
+                ),
+                ImportantUnknown(
+                    kind=ImportantUnknownKind.DEMOGRAPHICS,
+                    detail=(
+                        "Attendance, crowd density, demographics, gender composition, "
+                        "and relationship status are unknown."
+                    ),
+                ),
+            ]
+        )
+    if event_candidates:
+        unknowns.append(
+            ImportantUnknown(
+                kind=ImportantUnknownKind.EVENT_AVAILABILITY,
+                detail="Ticket and registration availability is not verified.",
+            )
+        )
+    if hike_candidates:
+        unknowns.extend(
+            [
+                ImportantUnknown(
+                    kind=ImportantUnknownKind.HIKE_ACCESS,
+                    detail=(
+                        "Hike access, closures, reservations, parking availability, "
+                        "and route conditions are not verified."
+                    ),
+                ),
+                ImportantUnknown(
+                    kind=ImportantUnknownKind.RECENT_PRECIPITATION,
+                    detail="Recent trail moisture and mud conditions are unknown.",
+                ),
+            ]
+        )
+        if any(
+            {"coast", "beach"} & {tag.casefold() for tag in hike.experience_tags}
+            for hike in hike_candidates
+        ):
+            unknowns.append(
+                ImportantUnknown(
+                    kind=ImportantUnknownKind.TIDE_SURF,
+                    detail="Tide and surf status is not verified where relevant.",
+                )
+            )
+    weather_details: list[str] = []
+    if baseline_weather is None:
+        weather_details.append("Regional baseline weather is unavailable")
+    if hike_weather_failures:
+        weather_details.append(
+            f"trailhead forecasts failed for {hike_weather_failures} location(s)"
+        )
+    if weather_details:
+        unknowns.append(
+            ImportantUnknown(
+                kind=ImportantUnknownKind.WEATHER_AVAILABILITY,
+                detail="; ".join(weather_details) + ".",
+            )
+        )
+    return unknowns
 
 
 def _bounded(value: str | None, limit: int) -> str | None:

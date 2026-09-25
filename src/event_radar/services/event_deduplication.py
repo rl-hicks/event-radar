@@ -85,6 +85,8 @@ def _completeness(event: Event) -> int:
             event.venue,
             event.price_min,
             event.price_max,
+            event.price_currency,
+            event.price_details,
         )
     )
 

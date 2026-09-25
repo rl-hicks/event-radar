@@ -24,6 +24,22 @@ class CandidateType(StrEnum):
     HIKE = "hike"
 
 
+class ImportantUnknownKind(StrEnum):
+    EVENT_PRICE = "event_price"
+    TRAVEL_TIME = "travel_time"
+    DEMOGRAPHICS = "demographics"
+    EVENT_AVAILABILITY = "event_availability"
+    HIKE_ACCESS = "hike_access"
+    RECENT_PRECIPITATION = "recent_precipitation"
+    TIDE_SURF = "tide_surf"
+    WEATHER_AVAILABILITY = "weather_availability"
+
+
+class ImportantUnknown(BaseModel):
+    kind: ImportantUnknownKind
+    detail: str = Field(min_length=1)
+
+
 class EventProvenanceContext(BaseModel):
     source_name: str
     source_id: str | None
@@ -45,6 +61,8 @@ class EventCandidateContext(BaseModel):
     activity_type: str
     price_min: Decimal | None
     price_max: Decimal | None
+    price_currency: str | None
+    price_details: str | None
     source_name: str
     source_id: str | None
     source_url: HttpUrl
@@ -139,7 +157,7 @@ class RecommendationContext(BaseModel):
     baseline_weather: BaselineWeatherContext | None
     event_candidates: list[EventCandidateContext]
     hike_candidates: list[HikeCandidateContext]
-    known_unknowns: list[str]
+    known_unknowns: list[ImportantUnknown]
 
     _generated_is_aware = field_validator("generated_at")(_aware)
     _weekend_start_is_aware = field_validator("weekend_start")(_aware)
@@ -196,7 +214,7 @@ class WeekendCuration(BaseModel):
     weekend_read: list[str] = Field(max_length=6)
     options: list[CuratedOption] = Field(max_length=18)
     notable_near_misses: list[NearMiss] = Field(max_length=10)
-    important_unknowns: list[str] = Field(max_length=12)
+    important_unknowns: list[ImportantUnknown] = Field(max_length=12)
 
 
 class CurationDiagnostics(BaseModel):

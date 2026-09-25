@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from event_radar.models.curation import (
@@ -7,14 +9,17 @@ from event_radar.models.curation import (
     CurationDiagnostics,
     CurationOutcome,
     CurationRole,
+    ImportantUnknown,
+    ImportantUnknownKind,
     WeekendCuration,
 )
 from event_radar.services.curation_rendering import (
+    format_event_time_range,
     render_chatgpt_packet,
     render_telegram_curation_summary,
     write_chatgpt_packet,
 )
-from tests.curation_helpers import START, recommendation_context
+from tests.curation_helpers import START, event, recommendation_context
 
 
 def outcome() -> CurationOutcome:
@@ -49,7 +54,12 @@ def outcome() -> CurationOutcome:
         weekend_read=["There is a useful mix of social and outdoor possibilities."],
         options=options,
         notable_near_misses=[],
-        important_unknowns=["Actual travel time is unknown."],
+        important_unknowns=[
+            ImportantUnknown(
+                kind=ImportantUnknownKind.TRAVEL_TIME,
+                detail="Actual travel time is unknown.",
+            )
+        ],
     )
     return CurationOutcome(
         curation=curation,
@@ -145,3 +155,85 @@ def test_packet_is_written_to_gitignored_output_directory(tmp_path: Path) -> Non
 
     assert path.name == "event-radar-2026-08-08.md"
     assert path.read_text(encoding="utf-8") == packet
+
+
+def test_event_time_range_converts_utc_to_pdt_and_preserves_end_time() -> None:
+    rendered = format_event_time_range(
+        datetime(2026, 9, 26, 0, 15, tzinfo=UTC),
+        datetime(2026, 9, 26, 3, 0, tzinfo=UTC),
+        "America/Los_Angeles",
+    )
+
+    assert rendered == "Friday, September 25 at 5:15 PM PDT to 8:00 PM PDT"
+
+
+def test_event_time_range_converts_winter_timestamp_to_pst() -> None:
+    rendered = format_event_time_range(
+        datetime(2026, 1, 17, 2, 0, tzinfo=UTC),
+        None,
+        "America/Los_Angeles",
+    )
+
+    assert rendered == "Friday, January 16 at 6:00 PM PST"
+
+
+def test_overnight_event_uses_each_local_date() -> None:
+    rendered = format_event_time_range(
+        datetime(2026, 8, 9, 6, 30, tzinfo=UTC),
+        datetime(2026, 8, 9, 8, 30, tzinfo=UTC),
+        "America/Los_Angeles",
+    )
+
+    assert rendered == ("Saturday, August 8 at 11:30 PM PDT to Sunday, August 9 at 1:30 AM PDT")
+
+
+def test_packet_and_telegram_use_local_event_time_and_source_price() -> None:
+    source_event = event(
+        title="Full Moon Hike",
+        start_time=datetime(2026, 9, 26, 0, 15, tzinfo=UTC),
+        price=Decimal("5"),
+        price_details="$5 - $10",
+    ).model_copy(update={"price_max": Decimal("10")})
+    context = recommendation_context(events=[source_event])
+
+    matching_outcome = outcome()
+    assert matching_outcome.curation is not None
+    options = list(matching_outcome.curation.options)
+    options[0] = options[0].model_copy(
+        update={"candidate_id": context.event_candidates[0].candidate_id}
+    )
+    matching_outcome = matching_outcome.model_copy(
+        update={"curation": matching_outcome.curation.model_copy(update={"options": options})}
+    )
+
+    packet = render_chatgpt_packet(context, matching_outcome)
+    summary = render_telegram_curation_summary(context, matching_outcome)
+
+    assert "Friday, September 25 at 5:15 PM PDT" in packet
+    assert "Price: $5 - $10" in packet
+    assert "Saturday, September 26 at 12:15 AM UTC" not in packet
+    assert "Friday, September 25 at 5:15 PM PDT" in summary
+    assert " UTC" not in summary
+
+
+def test_important_unknowns_are_deduplicated_by_semantic_kind() -> None:
+    context = recommendation_context()
+    base_outcome = outcome()
+    assert base_outcome.curation is not None
+    duplicate = ImportantUnknown(
+        kind=ImportantUnknownKind.TRAVEL_TIME,
+        detail="Driving duration has not been computed.",
+    )
+    distinct = ImportantUnknown(
+        kind=ImportantUnknownKind.TIDE_SURF,
+        detail="Tide and surf status is unknown.",
+    )
+    curated = base_outcome.curation.model_copy(update={"important_unknowns": [duplicate, distinct]})
+    packet = render_chatgpt_packet(
+        context,
+        base_outcome.model_copy(update={"curation": curated}),
+    )
+
+    assert packet.count("Travel times are not calculated") == 1
+    assert "Driving duration has not been computed." not in packet
+    assert packet.count("Tide and surf status is unknown.") == 1

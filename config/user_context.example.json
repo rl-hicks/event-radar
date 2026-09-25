@@ -50,15 +50,42 @@
     "local_regional_default": "Prefer regional hikes for ordinary weekends.",
     "destination_posture": "Preserve destination hikes when their payoff is distinctive."
   },
-  "schedule_anchors": [
+  "recurring_availability": [
     {
-      "id": "saturday-exercise",
+      "id": "friday-open",
+      "day_of_week": "friday",
+      "start_time": null,
+      "end_time": null,
+      "status": "open",
+      "description": "Friday is generally open.",
+      "override_policy": "Temporary directions may override this for a specific weekend."
+    },
+    {
+      "id": "saturday-climbing",
       "day_of_week": "saturday",
       "start_time": "08:00:00",
       "end_time": "12:00:00",
-      "strength": "soft",
-      "description": "Saturday morning is usually reserved for a recurring exercise commitment.",
-      "displacement_policy": "Only unusually strong or time-sensitive opportunities should displace it."
+      "status": "soft_anchor",
+      "description": "Saturday morning through approximately noon is normally reserved for indoor rock climbing.",
+      "override_policy": "Ordinary activities should not displace climbing. Preserve a conflicting option only when unusually strong, unique, or time-sensitive, and explicitly flag the conflict."
+    },
+    {
+      "id": "saturday-open",
+      "day_of_week": "saturday",
+      "start_time": "12:00:00",
+      "end_time": null,
+      "status": "open",
+      "description": "Saturday afternoon and evening are open.",
+      "override_policy": "Temporary directions may override this for a specific weekend."
+    },
+    {
+      "id": "sunday-open",
+      "day_of_week": "sunday",
+      "start_time": null,
+      "end_time": null,
+      "status": "open",
+      "description": "Sunday is generally open.",
+      "override_policy": "Temporary directions may override this for a specific weekend."
     }
   ],
   "category_priors": {

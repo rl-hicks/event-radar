@@ -16,7 +16,7 @@ from event_radar.models.hike_recommendation import (
     HikeWindowWeather,
 )
 from event_radar.models.recommendation import CandidateSelection, EventEvaluation
-from event_radar.models.user_context import ScheduleAnchor, UserContext
+from event_radar.models.user_context import UserContext
 from event_radar.models.weather import (
     DailyWeather,
     HourlyWeather,
@@ -34,17 +34,7 @@ END = datetime(2026, 8, 10, tzinfo=PACIFIC_TIME)
 
 
 def example_user_context() -> UserContext:
-    context = UserContextRepository(Path("config/user_context.example.json")).load()
-    climbing = ScheduleAnchor(
-        id="saturday-climbing",
-        day_of_week="saturday",
-        start_time="08:00:00",
-        end_time="12:00:00",
-        strength="soft",
-        description="Saturday morning through noon is normally reserved for indoor climbing.",
-        displacement_policy="Only unusually strong options should displace climbing.",
-    )
-    return context.model_copy(update={"schedule_anchors": [climbing]})
+    return UserContextRepository(Path("config/user_context.example.json")).load()
 
 
 def event(
@@ -53,6 +43,7 @@ def event(
     start_time: datetime | None = None,
     description: str | None = "A circulating public market with food and participatory art.",
     price: Decimal | None = None,
+    price_details: str | None = None,
 ) -> Event:
     start_time = start_time or datetime(2026, 8, 8, 18, tzinfo=PACIFIC_TIME)
     return Event(
@@ -68,6 +59,8 @@ def event(
         categories={"market", "community"},
         price_min=price,
         price_max=price,
+        price_currency="USD" if price is not None else None,
+        price_details=price_details,
     )
 
 

@@ -1,7 +1,8 @@
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from event_radar.models.curation import (
     CandidateType,
@@ -10,6 +11,7 @@ from event_radar.models.curation import (
     CurationRole,
     EventCandidateContext,
     HikeCandidateContext,
+    ImportantUnknown,
     RecommendationContext,
 )
 
@@ -26,13 +28,14 @@ def render_chatgpt_packet(
     context: RecommendationContext,
     outcome: CurationOutcome,
 ) -> str:
+    local_timezone = ZoneInfo(context.user_context.base_location.timezone)
     lines = [
         "# Event Radar - Weekend Decision Packet",
         "",
         "## Weekend",
         "",
-        f"{_format_datetime(context.weekend_start)} through "
-        f"{_format_datetime(context.weekend_end)} (exclusive end)",
+        f"{_format_datetime(context.weekend_start, local_timezone)} through "
+        f"{_format_datetime(context.weekend_end, local_timezone)} (exclusive end)",
         "",
         "## How to use this packet",
         "",
@@ -47,9 +50,11 @@ def render_chatgpt_packet(
         f"- Social posture: {context.user_context.social_posture.objective}",
         f"- Hiking posture: {context.user_context.hiking_posture.destination_posture}",
     ]
-    for anchor in context.user_context.schedule_anchors:
+    for window in context.user_context.recurring_availability:
+        time_range = _availability_time_range(window.start_time, window.end_time)
         lines.append(
-            f"- {anchor.day_of_week.title()} anchor ({anchor.strength}): {anchor.description}"
+            f"- {window.day_of_week.title()} availability ({window.status.value}"
+            f"{time_range}): {window.description}"
         )
     lines.extend(_direction_section("Permanent directions", context.permanent_directions))
     lines.extend(_direction_section("Temporary directions", context.temporary_directions))
@@ -72,13 +77,16 @@ def render_chatgpt_packet(
 
     lines.extend(_weather_section(context))
     if outcome.curation is None:
-        lines.extend(_fallback_candidates(context))
+        lines.extend(_fallback_candidates(context, local_timezone))
     else:
-        lines.extend(_curated_candidates(context, outcome.curation.options))
+        lines.extend(_curated_candidates(context, outcome.curation.options, local_timezone))
         lines.extend(["", "## Important unknowns", ""])
         lines.extend(
             _bullets(
-                [*context.known_unknowns, *outcome.curation.important_unknowns],
+                _important_unknown_details(
+                    context.known_unknowns,
+                    outcome.curation.important_unknowns,
+                ),
                 "None noted.",
             )
         )
@@ -118,6 +126,7 @@ def render_telegram_curation_summary(
     context: RecommendationContext,
     outcome: CurationOutcome,
 ) -> str:
+    local_timezone = ZoneInfo(context.user_context.base_location.timezone)
     lines = ["EVENT RADAR - THIS WEEKEND", ""]
     if outcome.curation is None:
         lines.extend(
@@ -148,7 +157,13 @@ def render_telegram_curation_summary(
         if standouts:
             lines.extend(["", "Standouts"])
             lines.extend(
-                f"- {_candidate_name(option.candidate_id, event_lookup, hike_lookup)}"
+                "- "
+                + _telegram_candidate_label(
+                    option.candidate_id,
+                    event_lookup,
+                    hike_lookup,
+                    local_timezone,
+                )
                 for option in standouts[:5]
             )
     lines.extend(
@@ -177,6 +192,7 @@ def write_chatgpt_packet(
 def _curated_candidates(
     context: RecommendationContext,
     options: list[CuratedOption],
+    local_timezone: ZoneInfo,
 ) -> list[str]:
     event_lookup, hike_lookup = _candidate_lookups(context)
     lines: list[str] = []
@@ -221,33 +237,34 @@ def _curated_candidates(
         for option in section_options:
             event = event_lookup.get(option.candidate_id)
             if event is not None:
-                lines.extend(_render_event(event, option))
+                lines.extend(_render_event(event, option, local_timezone))
             else:
-                lines.extend(_render_hike(hike_lookup[option.candidate_id], option))
+                lines.extend(_render_hike(hike_lookup[option.candidate_id], option, local_timezone))
     return lines
 
 
-def _fallback_candidates(context: RecommendationContext) -> list[str]:
+def _fallback_candidates(context: RecommendationContext, local_timezone: ZoneInfo) -> list[str]:
     lines = ["", "## Deterministic event candidates", ""]
     if context.event_candidates:
         for event in context.event_candidates:
-            lines.extend(_render_event(event, None))
+            lines.extend(_render_event(event, None, local_timezone))
     else:
         lines.append("No event candidates were available.")
     lines.extend(["", "## Deterministic hike candidates", ""])
     if context.hike_candidates:
         for hike in context.hike_candidates:
-            lines.extend(_render_hike(hike, None))
+            lines.extend(_render_hike(hike, None, local_timezone))
     else:
         lines.append("No hike candidates were available.")
     lines.extend(["", "## Important unknowns", ""])
-    lines.extend(_bullets(context.known_unknowns, "None noted."))
+    lines.extend(_bullets(_important_unknown_details(context.known_unknowns), "None noted."))
     return lines
 
 
 def _render_event(
     event: EventCandidateContext,
     option: CuratedOption | None,
+    local_timezone: ZoneInfo,
 ) -> list[str]:
     categories = ", ".join(event.categories) or "unknown"
     location = ", ".join(part for part in (event.venue, event.city) if part)
@@ -255,10 +272,10 @@ def _render_event(
         f"### {event.title}",
         "",
         f"- Candidate ID: `{event.candidate_id}`",
-        f"- When: {_format_datetime(event.start_time)}{_end_suffix(event.end_time)}",
+        f"- When: {format_event_time_range(event.start_time, event.end_time, local_timezone)}",
         f"- Where: {location}",
         f"- Categories: {categories}",
-        f"- Price: {_price(event.price_min, event.price_max)}",
+        f"- Price: {_price(event)}",
         f"- Source: [{event.source_name}]({event.source_url})",
         f"- Deterministic score: {event.deterministic_score}",
         f"- Deterministic reasons: {_joined(event.deterministic_reasons)}",
@@ -274,6 +291,7 @@ def _render_event(
 def _render_hike(
     hike: HikeCandidateContext,
     option: CuratedOption | None,
+    local_timezone: ZoneInfo,
 ) -> list[str]:
     weather = hike.weather
     conditions = ", ".join(condition.value for condition in weather.conditions)
@@ -282,8 +300,9 @@ def _render_hike(
         "",
         f"- Candidate ID: `{hike.candidate_id}`",
         f"- Area: {hike.park_or_area} ({hike.region})",
-        f"- Best window: {hike.day.strftime('%A')}, "
-        f"{_format_clock(hike.best_start_time)}-{_format_clock(hike.estimated_finish_time)}",
+        f"- Best window: {hike.best_start_time.astimezone(local_timezone).strftime('%A')}, "
+        f"{_format_clock(hike.best_start_time, local_timezone)}-"
+        f"{_format_clock(hike.estimated_finish_time, local_timezone)}",
         f"- Route: {hike.distance_miles:g} mi, {hike.elevation_gain_ft:,} ft gain, "
         f"{hike.difficulty}; {hike.duration_min_minutes}-{hike.duration_max_minutes} min",
         f"- Setting: {', '.join(hike.settings)}; shade {hike.shade}; exposure {hike.exposure}",
@@ -370,25 +389,75 @@ def _joined(items: list[str]) -> str:
     return "; ".join(items) if items else "none"
 
 
-def _format_datetime(value: datetime) -> str:
-    return value.strftime("%A, %B %-d at %-I:%M %p %Z")
+def format_event_time_range(
+    start: datetime,
+    end: datetime | None,
+    local_timezone: ZoneInfo | str,
+) -> str:
+    timezone = ZoneInfo(local_timezone) if isinstance(local_timezone, str) else local_timezone
+    local_start = start.astimezone(timezone)
+    rendered = _format_datetime(local_start, timezone)
+    if end is None:
+        return rendered
+    local_end = end.astimezone(timezone)
+    if local_end.date() == local_start.date():
+        return f"{rendered} to {_format_clock(local_end, timezone)} {local_end.tzname()}"
+    return f"{rendered} to {_format_datetime(local_end, timezone)}"
 
 
-def _format_clock(value: datetime) -> str:
-    return value.strftime("%-I:%M %p")
+def _format_datetime(value: datetime, local_timezone: ZoneInfo) -> str:
+    return value.astimezone(local_timezone).strftime("%A, %B %-d at %-I:%M %p %Z")
 
 
-def _end_suffix(value: datetime | None) -> str:
-    return f" to {_format_clock(value)}" if value is not None else ""
+def _format_clock(value: datetime, local_timezone: ZoneInfo) -> str:
+    return value.astimezone(local_timezone).strftime("%-I:%M %p")
 
 
-def _price(minimum: Decimal | None, maximum: Decimal | None) -> str:
+def _availability_time_range(start: time | None, end: time | None) -> str:
+    if start is None and end is None:
+        return ""
+    start_text = start.strftime("%-I:%M %p") if start is not None else "start of day"
+    end_text = end.strftime("%-I:%M %p") if end is not None else "end of day"
+    return f", {start_text}-{end_text}"
+
+
+def _price(event: EventCandidateContext) -> str:
+    if event.price_details:
+        return event.price_details
+    minimum = event.price_min
+    maximum = event.price_max
     if minimum is None and maximum is None:
         return "UNKNOWN"
+    symbol = "$" if event.price_currency in (None, "USD") else f"{event.price_currency} "
+    if minimum is not None and maximum is not None and minimum == maximum == Decimal("0"):
+        return "Free"
     if minimum is not None and maximum is not None and minimum != maximum:
-        return f"${minimum:g}-${maximum:g}"
+        return symbol + f"{minimum:g}-" + symbol + f"{maximum:g}"
     value = minimum if minimum is not None else maximum
-    return f"${value:g}" if value is not None else "UNKNOWN"
+    return symbol + f"{value:g}" if value is not None else "UNKNOWN"
+
+
+def _important_unknown_details(*groups: list[ImportantUnknown]) -> list[str]:
+    by_kind: dict[object, str] = {}
+    for group in groups:
+        for unknown in group:
+            by_kind.setdefault(unknown.kind, unknown.detail)
+    return list(by_kind.values())
+
+
+def _telegram_candidate_label(
+    candidate_id: str,
+    events: dict[str, EventCandidateContext],
+    hikes: dict[str, HikeCandidateContext],
+    local_timezone: ZoneInfo,
+) -> str:
+    event = events.get(candidate_id)
+    if event is not None:
+        return (
+            f"{event.title} - "
+            f"{format_event_time_range(event.start_time, event.end_time, local_timezone)}"
+        )
+    return hikes[candidate_id].name
 
 
 def _optional(value: float | None, suffix: str) -> str:

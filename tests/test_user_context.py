@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from event_radar.models.user_context import PreferenceStrength, SoloFriction
+from event_radar.models.user_context import (
+    AvailabilityStatus,
+    PreferenceStrength,
+    SoloFriction,
+)
 from event_radar.services.user_context import UserContextError, UserContextRepository
 from tests.curation_helpers import example_user_context
 
@@ -49,15 +53,24 @@ def test_real_user_context_path_is_gitignored() -> None:
     assert result.returncode == 0
 
 
-def test_saturday_climbing_is_a_soft_anchor() -> None:
-    anchor = next(
-        item for item in example_user_context().schedule_anchors if item.id == "saturday-climbing"
-    )
+def test_recurring_availability_models_open_time_and_soft_anchor() -> None:
+    windows = {item.id: item for item in example_user_context().recurring_availability}
 
-    assert anchor.day_of_week == "saturday"
-    assert anchor.strength == "soft"
-    assert anchor.start_time is not None and anchor.start_time.hour == 8
-    assert anchor.end_time is not None and anchor.end_time.hour == 12
+    friday = windows["friday-open"]
+    climbing = windows["saturday-climbing"]
+    saturday_open = windows["saturday-open"]
+    sunday = windows["sunday-open"]
+
+    assert friday.status is AvailabilityStatus.OPEN
+    assert friday.start_time is None and friday.end_time is None
+    assert climbing.status is AvailabilityStatus.SOFT_ANCHOR
+    assert climbing.start_time is not None and climbing.start_time.hour == 8
+    assert climbing.end_time is not None and climbing.end_time.hour == 12
+    assert saturday_open.status is AvailabilityStatus.OPEN
+    assert saturday_open.start_time is not None and saturday_open.start_time.hour == 12
+    assert saturday_open.end_time is None
+    assert sunday.status is AvailabilityStatus.OPEN
+    assert sunday.start_time is None and sunday.end_time is None
 
 
 def test_drive_cost_solo_and_category_policy_are_structured() -> None:

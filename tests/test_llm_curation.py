@@ -10,6 +10,8 @@ from event_radar.models.curation import (
     CuratedOption,
     CurationConfidence,
     CurationRole,
+    ImportantUnknown,
+    ImportantUnknownKind,
     WeekendCuration,
 )
 from event_radar.services.llm_curation import (
@@ -70,7 +72,12 @@ def valid_curation(count: int = 2) -> WeekendCuration:
         weekend_read=["The inventory mixes a social evening option and an outdoor option."],
         options=values,
         notable_near_misses=[],
-        important_unknowns=["Actual travel time is unknown."],
+        important_unknowns=[
+            ImportantUnknown(
+                kind=ImportantUnknownKind.TRAVEL_TIME,
+                detail="Actual travel time is unknown.",
+            )
+        ],
     )
 
 

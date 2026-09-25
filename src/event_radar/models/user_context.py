@@ -2,8 +2,9 @@ from datetime import time
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class PreferenceStrength(StrEnum):
@@ -28,6 +29,15 @@ class UserBaseLocation(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
     timezone: str = Field(min_length=1)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Base-location timezone must be a valid IANA timezone.") from exc
+        return value
 
 
 class DriveToleranceBand(BaseModel):
@@ -64,7 +74,14 @@ class CategoryPreference(BaseModel):
     notes: str = Field(min_length=1)
 
 
-class ScheduleAnchor(BaseModel):
+class AvailabilityStatus(StrEnum):
+    OPEN = "open"
+    SOFT_ANCHOR = "soft_anchor"
+    UNKNOWN = "unknown"
+    HARD_BLOCK = "hard_block"
+
+
+class AvailabilityWindow(BaseModel):
     id: str = Field(min_length=1)
     day_of_week: Literal[
         "monday",
@@ -77,9 +94,19 @@ class ScheduleAnchor(BaseModel):
     ]
     start_time: time | None = None
     end_time: time | None = None
-    strength: Literal["soft", "hard"]
+    status: AvailabilityStatus
     description: str = Field(min_length=1)
-    displacement_policy: str = Field(min_length=1)
+    override_policy: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "AvailabilityWindow":
+        if (
+            self.start_time is not None
+            and self.end_time is not None
+            and self.end_time <= self.start_time
+        ):
+            raise ValueError("Availability end time must follow start time.")
+        return self
 
 
 class HikingPosture(BaseModel):
@@ -121,16 +148,16 @@ class UserContext(BaseModel):
     nightlife_posture: list[str] = Field(min_length=1)
     crowd_posture: list[str] = Field(min_length=1)
     hiking_posture: HikingPosture
-    schedule_anchors: list[ScheduleAnchor] = Field(min_length=1)
+    recurring_availability: list[AvailabilityWindow] = Field(min_length=1)
     category_priors: dict[str, CategoryPreference] = Field(min_length=1)
     output_preferences: OutputPreferences
     anti_objectives: list[str] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_structured_policy(self) -> "UserContext":
-        anchor_ids = [anchor.id for anchor in self.schedule_anchors]
-        if len(anchor_ids) != len(set(anchor_ids)):
-            raise ValueError("Schedule anchor IDs must be unique.")
+        availability_ids = [window.id for window in self.recurring_availability]
+        if len(availability_ids) != len(set(availability_ids)):
+            raise ValueError("Availability window IDs must be unique.")
         if self.drive_tolerance[-1].maximum_minutes is not None:
             raise ValueError("Drive tolerance must end with an open-ended band.")
         if self.cost_tolerance[-1].maximum_dollars is not None:

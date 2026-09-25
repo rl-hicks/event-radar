@@ -7,6 +7,7 @@ from pydantic import HttpUrl, ValidationError
 
 from event_radar.collectors.base import EventCollector
 from event_radar.models.event import Event
+from event_radar.services.event_price import normalize_event_price
 
 SOURCE_NAME = "Happening in Sonoma County"
 EVENTS_ENDPOINT = "https://happeningsonomacounty.com/wp-json/tribe/events/v1/events"
@@ -155,6 +156,15 @@ def parse_happening_sonoma_event(record: dict[str, object]) -> Event | None:
         venue_record.get("province"),
     )
     description = _html_text(record.get("description"))
+    price = normalize_event_price(
+        structured_price=_first_nonempty_string(
+            record.get("cost"),
+            record.get("ticket_price"),
+            record.get("price"),
+        ),
+        structured_details=record.get("cost_details"),
+        description=description,
+    )
 
     try:
         return Event(
@@ -169,6 +179,10 @@ def parse_happening_sonoma_event(record: dict[str, object]) -> Event | None:
             city=city_value.strip(),
             state=state or "CA",
             categories=_category_slugs(record.get("categories")),
+            price_min=price.minimum if price is not None else None,
+            price_max=price.maximum if price is not None else None,
+            price_currency=price.currency if price is not None else None,
+            price_details=price.source_text if price is not None else None,
         )
     except ValidationError:
         return None

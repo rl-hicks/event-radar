@@ -29,11 +29,12 @@ Evaluate:
 - explicit adult or peer relevance without inventing attendee ages or gender composition;
 - payoff relative to known cost, drive friction, and time commitment, preserving UNKNOWN;
 - active-lifestyle and regional-exploration value;
-- schedule fit, especially the soft Saturday climbing anchor;
+- schedule fit using recurring_availability: OPEN is normally available, SOFT_ANCHOR may be displaced only by an exceptional opportunity, UNKNOWN must not be assumed available, and HARD_BLOCK must not be recommended;
+- Friday is explicitly OPEN; preserve the soft Saturday morning-through-noon climbing anchor;
 - temporary directions as current-week context and permanent directions as enduring context;
 - complementary alternatives rather than a rigid plan.
 
-An option conflicting with Saturday morning-through-noon climbing should survive only when
+Temporary directions may override recurring availability for this weekend. An option conflicting with Saturday morning-through-noon climbing should survive only when
 it is unusually strong, unique, or time-sensitive. Mark that conflict and explain why it
 remains. Do not treat the anchor as an absolute prohibition.
 
@@ -54,7 +55,7 @@ erase the outdoor decision space.
 For each retained option, provide concise editorial judgment only. Python will rehydrate all
 factual titles, times, locations, route metrics, weather, and URLs from authoritative context.
 Use tradeoffs and observation fields to distinguish sourced facts from inference. When
-evidence is absent, explicitly say it is unknown.
+evidence is absent, explicitly say it is unknown. Return important_unknowns using the supplied semantic kinds and include at most one item per kind; do not restate a concept already present in known_unknowns.
 
 Roles:
 

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -21,6 +22,8 @@ def _event_record(
     end_utc: str,
     city: str | None = "Santa Rosa",
     all_day: bool = False,
+    cost: str | None = None,
+    cost_details: dict[str, object] | None = None,
 ) -> dict[str, object]:
     venue: dict[str, object] = {"venue": "Example Hall", "state": "CA"}
     if city is not None:
@@ -35,6 +38,8 @@ def _event_record(
         "utc_end_date": end_utc,
         "venue": venue,
         "categories": [{"slug": "live-music"}],
+        "cost": cost or "",
+        "cost_details": cost_details or {},
     }
 
 
@@ -60,6 +65,25 @@ def test_parse_event_normalizes_api_record() -> None:
     assert event.venue == "Example Hall"
     assert event.city == "Sebastopol"
     assert event.categories == {"live-music"}
+
+
+def test_parse_event_preserves_structured_source_price() -> None:
+    event = parse_happening_sonoma_event(
+        _event_record(
+            event_id=80422,
+            title="Full Moon Hike",
+            start_utc="2026-09-26 00:15:00",
+            end_utc="2026-09-26 03:00:00",
+            cost="$5 - $10",
+            cost_details={"currency_code": "USD", "values": [5, 10]},
+        )
+    )
+
+    assert event is not None
+    assert event.price_min == Decimal("5")
+    assert event.price_max == Decimal("10")
+    assert event.price_currency == "USD"
+    assert event.price_details == "$5 - $10"
 
 
 def test_parse_event_skips_all_day_or_locationless_records() -> None:
