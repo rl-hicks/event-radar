@@ -23,6 +23,7 @@ from event_radar.services.event_cards import build_scraped_event_cards
 from event_radar.services.event_deduplication import DeduplicationResult
 from event_radar.services.event_evaluation import select_event_candidates
 from event_radar.services.pipeline import (
+    ExternalSourceStatus,
     RecommendationPipelineResult,
     build_event_intelligence_without_ai,
 )
@@ -66,6 +67,9 @@ def fixture_pipeline() -> RecommendationPipelineResult:
         temporary_directions=[],
         sonoma_tourism_events=events[:1],
         happening_sonoma_events=events[1:],
+        sonoma_tourism_status=ExternalSourceStatus(success=True, count=1),
+        happening_sonoma_status=ExternalSourceStatus(success=True, count=2),
+        weather_failure_reason=None,
         deduplication=DeduplicationResult(events=events, duplicates_removed=0),
         valid_events=events,
         factual_rejections={},
@@ -129,6 +133,13 @@ def test_new_audit_artifacts_expose_ai_pipeline_and_legacy_is_diagnostic(
     }
     manifest = json.loads((result.output_directory / "00-manifest.json").read_text())
     assert manifest["sent_to_scraped_event_analysis"] == 3
+    assert manifest["source_status"]["sonoma_tourism"] == {
+        "success": True,
+        "count": 1,
+        "failure_reason": None,
+    }
+    assert manifest["source_status"]["happening_sonoma"]["count"] == 2
+    assert manifest["source_status"]["weather"]["success"] is True
     assert manifest["legacy_deterministic_diagnostic"]["production_recall_control"] is False
     assert manifest["scraped_analysis"]["scraped_card_count"] == 3
     assert manifest["combined_event_card_count"] == 3
@@ -286,3 +297,45 @@ def test_audit_directory_is_gitignored() -> None:
         check=False,
     )
     assert result.returncode == 0
+
+
+def test_audit_manifest_records_degraded_source_and_weather_status(tmp_path: Path) -> None:
+    pipeline = replace(
+        fixture_pipeline(),
+        happening_sonoma_events=[],
+        happening_sonoma_status=ExternalSourceStatus(
+            success=False,
+            count=0,
+            failure_reason=(
+                "Happening in Sonoma County returned invalid JSON after 3 attempt(s) "
+                "(status=200, content_type='text/html')."
+            ),
+        ),
+        baseline_weather=None,
+        weather_failure_reason="Open-Meteo request timed out.",
+    )
+    intelligence = build_event_intelligence_without_ai(
+        pipeline,
+        model="test",
+        reason="Disabled.",
+    )
+    result = write_audit_artifacts(
+        pipeline,
+        intelligence,
+        outcome(
+            len(intelligence.context.event_cards),
+            len(intelligence.context.hike_candidates),
+        ),
+        output_root=tmp_path / "audit",
+        llm_requested=False,
+    )
+
+    manifest = json.loads((result.output_directory / "00-manifest.json").read_text())
+    happening = manifest["source_status"]["happening_sonoma"]
+    assert happening["success"] is False
+    assert happening["count"] == 0
+    assert "invalid JSON after 3 attempt(s)" in happening["failure_reason"]
+    assert manifest["source_status"]["weather"] == {
+        "success": False,
+        "failure_reason": "Open-Meteo request timed out.",
+    }

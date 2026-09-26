@@ -4,8 +4,11 @@ from datetime import datetime
 
 import httpx
 
-from event_radar.collectors.happening_sonoma import HappeningSonomaCollector
-from event_radar.collectors.sonoma_county import SonomaCountyCollector
+from event_radar.collectors.happening_sonoma import (
+    HappeningSonomaCollector,
+    HappeningSonomaCollectorError,
+)
+from event_radar.collectors.sonoma_county import SonomaCountyCollector, SonomaCountyCollectorError
 from event_radar.config import Settings
 from event_radar.models.ai import AIStageDiagnostics
 from event_radar.models.curation import RecommendationContext
@@ -52,6 +55,25 @@ from event_radar.services.weekend import upcoming_weekend_window
 
 
 @dataclass(frozen=True)
+class ExternalSourceStatus:
+    success: bool
+    count: int
+    failure_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class EventSourceCollection:
+    events: list[Event]
+    status: ExternalSourceStatus
+
+
+@dataclass(frozen=True)
+class WeatherFetchResult:
+    weather: WeekendWeather | None
+    failure_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class RecommendationPipelineResult:
     generated_at: datetime
     weekend_start: datetime
@@ -61,6 +83,9 @@ class RecommendationPipelineResult:
     temporary_directions: list[Direction]
     sonoma_tourism_events: list[Event]
     happening_sonoma_events: list[Event]
+    sonoma_tourism_status: ExternalSourceStatus
+    happening_sonoma_status: ExternalSourceStatus
+    weather_failure_reason: str | None
     deduplication: DeduplicationResult
     valid_events: list[Event]
     factual_rejections: dict[str, list[str]]
@@ -88,13 +113,72 @@ async def fetch_baseline_weather(
     end: datetime,
 ) -> WeekendWeather | None:
     """Fetch weather without making a provider outage suppress the event digest."""
+    return (await fetch_baseline_weather_with_status(client, location, start, end)).weather
+
+
+async def fetch_baseline_weather_with_status(
+    client: OpenMeteoWeatherClient,
+    location: WeatherLocation,
+    start: datetime,
+    end: datetime,
+) -> WeatherFetchResult:
     forecast_start, forecast_end = forecast_dates_for_window(start, end, location)
     try:
         weather = await client.get_forecast(location, forecast_start, forecast_end)
     except WeatherProviderError as exc:
-        print(f"Weather unavailable: {exc}")
-        return None
-    return filter_weather_to_window(weather, start, end)
+        reason = str(exc)
+        print(f"Weather unavailable: {reason}")
+        return WeatherFetchResult(weather=None, failure_reason=reason)
+    return WeatherFetchResult(
+        weather=filter_weather_to_window(weather, start, end),
+        failure_reason=None,
+    )
+
+
+async def collect_event_sources(
+    sonoma_collector: SonomaCountyCollector,
+    happening_collector: HappeningSonomaCollector,
+    *,
+    start: datetime,
+    end: datetime,
+) -> tuple[EventSourceCollection, EventSourceCollection]:
+    """Collect fixed feeds independently, degrading only known provider failures."""
+
+    async def collect_sonoma() -> EventSourceCollection:
+        try:
+            events = await sonoma_collector.collect(start=start, end=end)
+        except SonomaCountyCollectorError as exc:
+            reason = str(exc)
+            print(f"Sonoma County Tourism unavailable: {reason}")
+            return EventSourceCollection(
+                events=[],
+                status=ExternalSourceStatus(success=False, count=0, failure_reason=reason),
+            )
+        return EventSourceCollection(
+            events=events,
+            status=ExternalSourceStatus(success=True, count=len(events)),
+        )
+
+    async def collect_happening() -> EventSourceCollection:
+        try:
+            events = await happening_collector.collect(start=start, end=end)
+        except HappeningSonomaCollectorError as exc:
+            reason = str(exc)
+            print(f"Happening in Sonoma County unavailable: {reason}")
+            return EventSourceCollection(
+                events=[],
+                status=ExternalSourceStatus(success=False, count=0, failure_reason=reason),
+            )
+        return EventSourceCollection(
+            events=events,
+            status=ExternalSourceStatus(success=True, count=len(events)),
+        )
+
+    sonoma_result, happening_result = await asyncio.gather(
+        collect_sonoma(),
+        collect_happening(),
+    )
+    return sonoma_result, happening_result
 
 
 async def build_recommendation_pipeline(
@@ -128,10 +212,14 @@ async def build_recommendation_pipeline(
             timeout_seconds=runtime_settings.request_timeout_seconds,
             client=weather_http_client,
         )
-        sonoma_events, happening_events, weather, hike_weather = await asyncio.gather(
-            sonoma_collector.collect(start=start, end=end),
-            happening_collector.collect(start=start, end=end),
-            fetch_baseline_weather(weather_client, weather_location, start, end),
+        source_results, weather_result, hike_weather = await asyncio.gather(
+            collect_event_sources(
+                sonoma_collector,
+                happening_collector,
+                start=start,
+                end=end,
+            ),
+            fetch_baseline_weather_with_status(weather_client, weather_location, start, end),
             collect_trailhead_weather(
                 hike_catalog.hikes,
                 weather_client,
@@ -141,6 +229,10 @@ async def build_recommendation_pipeline(
             ),
         )
 
+    sonoma_result, happening_result = source_results
+    sonoma_events = sonoma_result.events
+    happening_events = happening_result.events
+    weather = weather_result.weather
     deduplication = deduplicate_events([*sonoma_events, *happening_events])
     valid_events: list[Event] = []
     factual_rejections: dict[str, list[str]] = {}
@@ -168,6 +260,9 @@ async def build_recommendation_pipeline(
         temporary_directions=temporary_directions,
         sonoma_tourism_events=sonoma_events,
         happening_sonoma_events=happening_events,
+        sonoma_tourism_status=sonoma_result.status,
+        happening_sonoma_status=happening_result.status,
+        weather_failure_reason=weather_result.failure_reason,
         deduplication=deduplication,
         valid_events=valid_events,
         factual_rejections=factual_rejections,
@@ -186,10 +281,27 @@ async def build_event_intelligence(
 ) -> EventIntelligenceResult:
     request = _analysis_request(pipeline)
     web_request = build_web_discovery_request(request)
-    analysis_outcome, web_outcome = await asyncio.gather(
-        analyze_scraped_events_with_fallback(analysis_service, request),
-        discover_events_with_fallback(web_service, web_request),
-    )
+    if request.events:
+        analysis_outcome, web_outcome = await asyncio.gather(
+            analyze_scraped_events_with_fallback(analysis_service, request),
+            discover_events_with_fallback(web_service, web_request),
+        )
+    else:
+        analysis_outcome = ScrapedEventAnalysisOutcome(
+            analysis=None,
+            diagnostics=AIStageDiagnostics(
+                stage="scraped_event_analysis",
+                model=analysis_service.model,
+                success=False,
+                fallback_reason=(
+                    "No fixed-feed events were available; AI #1 was intentionally skipped."
+                ),
+                input_count=0,
+                result_count=0,
+                attempts=0,
+            ),
+        )
+        web_outcome = await discover_events_with_fallback(web_service, web_request)
     web_discoveries, duplicate_count = remove_exact_web_duplicates(
         web_outcome.valid_discoveries,
         request.events,
@@ -289,14 +401,20 @@ def _intelligence_result(
     web_cards: list[WeekendEventCard],
 ) -> EventIntelligenceResult:
     combined = [*scraped_cards, *web_cards]
-    notes: list[str] = []
+    notes = _provider_research_notes(pipeline)
     if not analysis_outcome.diagnostics.success:
-        notes.append(
-            "Scraped-event semantic analysis was unavailable; broad factual scraped cards "
-            "were preserved without pretending analysis succeeded."
-        )
+        if request.events:
+            notes.append(
+                "Scraped-event semantic analysis was unavailable; broad factual scraped cards "
+                "were preserved without pretending analysis succeeded."
+            )
+        else:
+            notes.append(
+                "AI #1 scraped-event analysis was skipped because no fixed-feed events "
+                "were available."
+            )
     if not web_outcome.diagnostics.success:
-        notes.append("Web discovery was unavailable; the run continues with scraped inventory.")
+        notes.append("Web discovery was unavailable; no web-discovered event cards were added.")
     context = build_recommendation_context(
         generated_at=pipeline.generated_at,
         weekend_start=pipeline.weekend_start,
@@ -318,6 +436,48 @@ def _intelligence_result(
         combined_event_cards=combined,
         context=context,
     )
+
+
+def _provider_research_notes(pipeline: RecommendationPipelineResult) -> list[str]:
+    sonoma_ok = pipeline.sonoma_tourism_status.success
+    happening_ok = pipeline.happening_sonoma_status.success
+    notes: list[str] = []
+    if not sonoma_ok and not happening_ok:
+        notes.append(
+            "Both fixed event feeds were unavailable "
+            f"(Sonoma Tourism: {_concise_source_reason(pipeline.sonoma_tourism_status)}; "
+            "Happening Sonoma: "
+            f"{_concise_source_reason(pipeline.happening_sonoma_status)}); "
+            "this run relies on web discovery and curated hikes."
+        )
+    elif not sonoma_ok:
+        notes.append(
+            "Sonoma County Tourism was unavailable "
+            f"({_concise_source_reason(pipeline.sonoma_tourism_status)}); "
+            "this run used Happening Sonoma and web discovery."
+        )
+    elif not happening_ok:
+        notes.append(
+            "Happening Sonoma was unavailable after bounded retries "
+            f"({_concise_source_reason(pipeline.happening_sonoma_status)}); "
+            "this run used Sonoma County Tourism and web discovery."
+        )
+    if pipeline.weather_failure_reason is not None:
+        notes.append("Weather unavailable; weather-sensitive judgments are degraded.")
+    return notes
+
+
+def _concise_source_reason(status: ExternalSourceStatus) -> str:
+    reason = (status.failure_reason or "").casefold()
+    if "invalid json" in reason:
+        return "invalid JSON response"
+    if "schema/payload" in reason or "event listing" in reason:
+        return "malformed provider payload"
+    if "http status" in reason:
+        return "HTTP status error"
+    if "network failure" in reason or "timed out" in reason:
+        return "network failure"
+    return "provider request failed"
 
 
 def _analysis_request(

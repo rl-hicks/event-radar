@@ -77,6 +77,22 @@ def write_audit_artifacts(
             "sonoma_tourism": len(pipeline.sonoma_tourism_events),
             "happening_sonoma": len(pipeline.happening_sonoma_events),
         },
+        "source_status": {
+            "sonoma_tourism": {
+                "success": pipeline.sonoma_tourism_status.success,
+                "count": pipeline.sonoma_tourism_status.count,
+                "failure_reason": pipeline.sonoma_tourism_status.failure_reason,
+            },
+            "happening_sonoma": {
+                "success": pipeline.happening_sonoma_status.success,
+                "count": pipeline.happening_sonoma_status.count,
+                "failure_reason": pipeline.happening_sonoma_status.failure_reason,
+            },
+            "weather": {
+                "success": pipeline.baseline_weather is not None,
+                "failure_reason": pipeline.weather_failure_reason,
+            },
+        },
         "duplicates_removed": pipeline.deduplication.duplicates_removed,
         "deduplicated_count": len(pipeline.deduplication.events),
         "factual_valid_count": len(pipeline.valid_events),

@@ -198,6 +198,20 @@ def _print_pipeline_diagnostics(
     intelligence: EventIntelligenceResult,
     outcome: CurationOutcome,
 ) -> None:
+    print("Public source status:")
+    for name, status in (
+        ("Sonoma County Tourism", pipeline.sonoma_tourism_status),
+        ("Happening Sonoma", pipeline.happening_sonoma_status),
+    ):
+        detail = f", reason={status.failure_reason}" if status.failure_reason else ""
+        print(
+            f"- {name}: {'success' if status.success else 'unavailable'}, "
+            f"count={status.count}{detail}"
+        )
+    if pipeline.weather_failure_reason is not None:
+        print(f"- Weather: unavailable, reason={pipeline.weather_failure_reason}")
+    else:
+        print("- Weather: success")
     print("Legacy deterministic event evaluation (diagnostic only):")
     print(format_selection_diagnostics(pipeline.legacy_event_selection))
     if pipeline.baseline_weather is not None:

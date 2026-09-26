@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from typing import cast
 
@@ -12,6 +13,9 @@ from event_radar.services.event_price import normalize_event_price
 SOURCE_NAME = "Happening in Sonoma County"
 EVENTS_ENDPOINT = "https://happeningsonomacounty.com/wp-json/tribe/events/v1/events"
 PAGE_SIZE = 50
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = (0.25, 0.75)
+MAX_RETRY_AFTER_SECONDS = 5.0
 
 
 class HappeningSonomaCollectorError(RuntimeError):
@@ -27,10 +31,16 @@ class HappeningSonomaCollector(EventCollector):
         user_agent: str,
         timeout_seconds: float = 20.0,
         client: httpx.AsyncClient | None = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        retry_backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS,
     ) -> None:
+        if max_attempts < 1:
+            raise ValueError("Happening Sonoma max_attempts must be at least 1.")
         self._user_agent = user_agent
         self._timeout_seconds = timeout_seconds
         self._client = client
+        self._max_attempts = max_attempts
+        self._retry_backoff_seconds = retry_backoff_seconds
 
     async def collect(self, start: datetime, end: datetime) -> list[Event]:
         _validate_window(start, end)
@@ -68,51 +78,151 @@ class HappeningSonomaCollector(EventCollector):
         end: datetime,
         page: int,
     ) -> tuple[list[dict[str, object]], int]:
+        params: dict[str, str | int] = {
+            "start_date": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+            "end_date": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+            "per_page": PAGE_SIZE,
+            "page": page,
+        }
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                response = await client.get(
+                    EVENTS_ENDPOINT,
+                    params=params,
+                    headers={"User-Agent": self._user_agent},
+                    timeout=self._timeout_seconds,
+                    follow_redirects=True,
+                )
+            except httpx.RequestError as exc:
+                detail = _network_diagnostics(exc, page)
+                if attempt < self._max_attempts:
+                    await self._wait_before_retry(attempt, detail)
+                    continue
+                raise HappeningSonomaCollectorError(
+                    "Happening in Sonoma County network failure after "
+                    f"{attempt} attempt(s) ({detail})."
+                ) from exc
+
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = _response_diagnostics(response, page, type(exc).__name__)
+                if _is_transient_status(response.status_code) and attempt < self._max_attempts:
+                    await self._wait_before_retry(attempt, detail, response=response)
+                    continue
+                raise HappeningSonomaCollectorError(
+                    "Happening in Sonoma County HTTP status failure after "
+                    f"{attempt} attempt(s) ({detail})."
+                ) from exc
+
+            try:
+                payload = cast(object, response.json())
+            except ValueError as exc:
+                detail = _response_diagnostics(response, page, type(exc).__name__)
+                if attempt < self._max_attempts:
+                    await self._wait_before_retry(attempt, detail, response=response)
+                    continue
+                raise HappeningSonomaCollectorError(
+                    "Happening in Sonoma County returned invalid JSON after "
+                    f"{attempt} attempt(s) ({detail})."
+                ) from exc
+
+            try:
+                return _parse_page_payload(payload)
+            except ValueError as exc:
+                detail = _response_diagnostics(response, page, type(exc).__name__)
+                if attempt < self._max_attempts:
+                    await self._wait_before_retry(attempt, detail, response=response)
+                    continue
+                raise HappeningSonomaCollectorError(
+                    "Happening in Sonoma County returned an invalid schema/payload after "
+                    f"{attempt} attempt(s): {exc} ({detail})."
+                ) from exc
+
+        raise AssertionError("Happening Sonoma retry loop exited unexpectedly.")
+
+    async def _wait_before_retry(
+        self,
+        attempt: int,
+        detail: str,
+        *,
+        response: httpx.Response | None = None,
+    ) -> None:
+        delay = _retry_delay(
+            attempt,
+            self._retry_backoff_seconds,
+            response.headers.get("Retry-After") if response is not None else None,
+        )
+        print(
+            "Happening in Sonoma County transient fetch failure; "
+            f"retrying after {delay:.2f}s ({detail})."
+        )
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
+def _parse_page_payload(payload: object) -> tuple[list[dict[str, object]], int]:
+    if not isinstance(payload, dict):
+        raise ValueError("expected a JSON object")
+
+    typed_payload = cast(dict[str, object], payload)
+    raw_events = typed_payload.get("events")
+    raw_total_pages = typed_payload.get("total_pages")
+    if not isinstance(raw_events, list) or not isinstance(raw_total_pages, int):
+        raise ValueError("response was missing pagination or events")
+
+    records = [
+        cast(dict[str, object], raw_event)
+        for raw_event in raw_events
+        if isinstance(raw_event, dict)
+    ]
+    return records, max(raw_total_pages, 0)
+
+
+def _is_transient_status(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code < 600
+
+
+def _response_diagnostics(
+    response: httpx.Response,
+    page: int,
+    exception_class: str,
+) -> str:
+    content_type = response.headers.get("Content-Type", "unknown")
+    retry_after = response.headers.get("Retry-After")
+    values = [
+        f"page={page}",
+        f"url={response.request.url}",
+        f"status={response.status_code}",
+        f"content_type={content_type!r}",
+        f"bytes={len(response.content)}",
+        f"exception={exception_class}",
+    ]
+    if retry_after is not None:
+        values.append(f"retry_after={retry_after!r}")
+    return ", ".join(values)
+
+
+def _network_diagnostics(exc: httpx.RequestError, page: int) -> str:
+    return (
+        f"page={page}, url={exc.request.url}, status=unavailable, "
+        f"content_type=unavailable, bytes=unavailable, exception={type(exc).__name__}"
+    )
+
+
+def _retry_delay(
+    attempt: int,
+    backoff_seconds: tuple[float, ...],
+    retry_after: str | None,
+) -> float:
+    if retry_after is not None:
         try:
-            response = await client.get(
-                EVENTS_ENDPOINT,
-                params={
-                    "start_date": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
-                    "end_date": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
-                    "per_page": PAGE_SIZE,
-                    "page": page,
-                },
-                headers={"User-Agent": self._user_agent},
-                timeout=self._timeout_seconds,
-                follow_redirects=True,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise HappeningSonomaCollectorError(
-                f"Could not fetch Happening in Sonoma County events page {page}."
-            ) from exc
-
-        try:
-            payload = cast(object, response.json())
-        except ValueError as exc:
-            raise HappeningSonomaCollectorError(
-                "Happening in Sonoma County returned invalid JSON."
-            ) from exc
-
-        if not isinstance(payload, dict):
-            raise HappeningSonomaCollectorError(
-                "Happening in Sonoma County returned invalid event data."
-            )
-
-        typed_payload = cast(dict[str, object], payload)
-        raw_events = typed_payload.get("events")
-        raw_total_pages = typed_payload.get("total_pages")
-        if not isinstance(raw_events, list) or not isinstance(raw_total_pages, int):
-            raise HappeningSonomaCollectorError(
-                "Happening in Sonoma County response was missing pagination or events."
-            )
-
-        records: list[dict[str, object]] = []
-        for raw_event in raw_events:
-            if isinstance(raw_event, dict):
-                records.append(cast(dict[str, object], raw_event))
-
-        return records, max(raw_total_pages, 0)
+            return min(max(float(retry_after), 0.0), MAX_RETRY_AFTER_SECONDS)
+        except ValueError:
+            pass
+    if not backoff_seconds:
+        return 0.0
+    return max(backoff_seconds[min(attempt - 1, len(backoff_seconds) - 1)], 0.0)
 
 
 def parse_happening_sonoma_event(record: dict[str, object]) -> Event | None:

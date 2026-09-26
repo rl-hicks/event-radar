@@ -196,9 +196,157 @@ async def test_collect_rejects_invalid_source_payload() -> None:
         return httpx.Response(200, json={"unexpected": "value"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        collector = HappeningSonomaCollector(user_agent="EventRadar/Test", client=client)
+        collector = HappeningSonomaCollector(
+            user_agent="EventRadar/Test",
+            client=client,
+            retry_backoff_seconds=(0, 0),
+        )
         with pytest.raises(HappeningSonomaCollectorError, match="missing pagination"):
             await collector.collect(
                 start=datetime(2026, 8, 8, tzinfo=PACIFIC_TIME),
                 end=datetime(2026, 8, 9, tzinfo=PACIFIC_TIME),
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_status", [500, 429])
+async def test_collect_retries_transient_http_status_then_succeeds(first_status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                first_status,
+                text="<html>temporary upstream response</html>",
+                headers={"Content-Type": "text/html", "Retry-After": "0"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "events": [
+                    _event_record(
+                        event_id=31,
+                        title="Recovered Event",
+                        start_utc="2026-08-08 17:00:00",
+                        end_utc="2026-08-08 18:00:00",
+                    )
+                ],
+                "total_pages": 1,
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        collector = HappeningSonomaCollector(
+            user_agent="EventRadar/Test",
+            client=client,
+            retry_backoff_seconds=(0, 0),
+        )
+        events = await collector.collect(
+            start=datetime(2026, 8, 8, tzinfo=PACIFIC_TIME),
+            end=datetime(2026, 8, 9, tzinfo=PACIFIC_TIME),
+        )
+
+    assert calls == 2
+    assert [event.title for event in events] == ["Recovered Event"]
+
+
+@pytest.mark.asyncio
+async def test_collect_retries_invalid_json_then_succeeds() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                text="<html>transient challenge</html>",
+                headers={"Content-Type": "text/html"},
+            )
+        return httpx.Response(200, json={"events": [], "total_pages": 1})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        collector = HappeningSonomaCollector(
+            user_agent="EventRadar/Test",
+            client=client,
+            retry_backoff_seconds=(0, 0),
+        )
+        events = await collector.collect(
+            start=datetime(2026, 8, 8, tzinfo=PACIFIC_TIME),
+            end=datetime(2026, 8, 9, tzinfo=PACIFIC_TIME),
+        )
+
+    assert calls == 2
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_collect_repeated_invalid_json_has_sanitized_http_diagnostics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret_body = "PUBLIC-PAGE-PREFIX-BUT-DO-NOT-LOG-THIS-CONTENT"
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            text=secret_body,
+            headers={"Content-Type": "text/html; charset=UTF-8"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        collector = HappeningSonomaCollector(
+            user_agent="EventRadar/Test",
+            client=client,
+            retry_backoff_seconds=(0, 0),
+        )
+        with pytest.raises(HappeningSonomaCollectorError) as caught:
+            await collector.collect(
+                start=datetime(2026, 8, 8, tzinfo=PACIFIC_TIME),
+                end=datetime(2026, 8, 9, tzinfo=PACIFIC_TIME),
+            )
+
+    message = str(caught.value)
+    assert calls == 3
+    assert "invalid JSON after 3 attempt(s)" in message
+    assert "status=200" in message
+    assert "content_type='text/html; charset=UTF-8'" in message
+    assert f"bytes={len(secret_body)}" in message
+    assert "page=1" in message
+    assert "JSONDecodeError" in message
+    assert secret_body not in message
+    assert secret_body not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_collect_does_not_retry_permanent_4xx() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            404,
+            text="not found",
+            headers={"Content-Type": "text/html"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        collector = HappeningSonomaCollector(
+            user_agent="EventRadar/Test",
+            client=client,
+            retry_backoff_seconds=(0, 0),
+        )
+        with pytest.raises(HappeningSonomaCollectorError) as caught:
+            await collector.collect(
+                start=datetime(2026, 8, 8, tzinfo=PACIFIC_TIME),
+                end=datetime(2026, 8, 9, tzinfo=PACIFIC_TIME),
+            )
+
+    assert calls == 1
+    assert "HTTP status failure after 1 attempt(s)" in str(caught.value)
+    assert "status=404" in str(caught.value)

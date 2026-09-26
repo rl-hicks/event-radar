@@ -84,12 +84,29 @@ class SonomaCountyCollector(EventCollector):
                 follow_redirects=True,
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
             raise SonomaCountyCollectorError(
-                f"Could not fetch Sonoma County Tourism events for {month}."
+                "Sonoma County Tourism HTTP status failure "
+                f"(month={month}, url={response.request.url}, status={response.status_code}, "
+                f"content_type={response.headers.get('Content-Type', 'unknown')!r}, "
+                f"bytes={len(response.content)}, exception={type(exc).__name__})."
+            ) from exc
+        except httpx.RequestError as exc:
+            raise SonomaCountyCollectorError(
+                "Sonoma County Tourism network failure "
+                f"(month={month}, url={exc.request.url}, exception={type(exc).__name__})."
             ) from exc
 
-        payload = cast(object, response.json())
+        try:
+            payload = cast(object, response.json())
+        except ValueError as exc:
+            raise SonomaCountyCollectorError(
+                "Sonoma County Tourism returned invalid JSON "
+                f"(month={month}, url={response.request.url}, status={response.status_code}, "
+                f"content_type={response.headers.get('Content-Type', 'unknown')!r}, "
+                f"bytes={len(response.content)}, exception={type(exc).__name__})."
+            ) from exc
         if not isinstance(payload, dict):
             raise SonomaCountyCollectorError("Sonoma County Tourism returned invalid event data.")
 
