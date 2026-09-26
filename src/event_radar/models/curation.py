@@ -1,10 +1,10 @@
 from datetime import date, datetime
-from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
+from event_radar.models.event_analysis import WeekendEventCard
 from event_radar.models.user_context import UserContext
 from event_radar.models.weather import WeatherCondition
 
@@ -13,10 +13,6 @@ def _aware(value: datetime) -> datetime:
     if value.utcoffset() is None:
         raise ValueError("Curation datetimes must be timezone-aware.")
     return value
-
-
-def _aware_optional(value: datetime | None) -> datetime | None:
-    return _aware(value) if value is not None else None
 
 
 class CandidateType(StrEnum):
@@ -33,43 +29,13 @@ class ImportantUnknownKind(StrEnum):
     RECENT_PRECIPITATION = "recent_precipitation"
     TIDE_SURF = "tide_surf"
     WEATHER_AVAILABILITY = "weather_availability"
+    EVENT_ANALYSIS = "event_analysis"
+    WEB_DISCOVERY = "web_discovery"
 
 
 class ImportantUnknown(BaseModel):
     kind: ImportantUnknownKind
     detail: str = Field(min_length=1)
-
-
-class EventProvenanceContext(BaseModel):
-    source_name: str
-    source_id: str | None
-    source_url: HttpUrl
-
-
-class EventCandidateContext(BaseModel):
-    candidate_type: Literal[CandidateType.EVENT] = CandidateType.EVENT
-    candidate_id: str
-    title: str
-    start_time: datetime
-    end_time: datetime | None
-    city: str
-    venue: str | None
-    categories: list[str]
-    description: str | None
-    deterministic_score: int
-    deterministic_reasons: list[str]
-    activity_type: str
-    price_min: Decimal | None
-    price_max: Decimal | None
-    price_currency: str | None
-    price_details: str | None
-    source_name: str
-    source_id: str | None
-    source_url: HttpUrl
-    alternate_sources: list[EventProvenanceContext]
-
-    _start_is_aware = field_validator("start_time")(_aware)
-    _end_is_aware = field_validator("end_time")(_aware_optional)
 
 
 class HikeWeatherContext(BaseModel):
@@ -146,7 +112,7 @@ class BaselineWeatherContext(BaseModel):
 
 
 class RecommendationContext(BaseModel):
-    """Deterministic factual input supplied to the automated research editor."""
+    """Authoritative facts plus unscored semantic event cards for final curation."""
 
     generated_at: datetime
     weekend_start: datetime
@@ -155,9 +121,10 @@ class RecommendationContext(BaseModel):
     permanent_directions: list[str]
     temporary_directions: list[str]
     baseline_weather: BaselineWeatherContext | None
-    event_candidates: list[EventCandidateContext]
+    event_cards: list[WeekendEventCard]
     hike_candidates: list[HikeCandidateContext]
     known_unknowns: list[ImportantUnknown]
+    event_pipeline_notes: list[str] = Field(default_factory=list)
 
     _generated_is_aware = field_validator("generated_at")(_aware)
     _weekend_start_is_aware = field_validator("weekend_start")(_aware)
@@ -168,7 +135,7 @@ class RecommendationContext(BaseModel):
         if self.weekend_end <= self.weekend_start:
             raise ValueError("Recommendation weekend end must follow its start.")
         candidate_ids = [
-            *(candidate.candidate_id for candidate in self.event_candidates),
+            *(candidate.candidate_id for candidate in self.event_cards),
             *(candidate.candidate_id for candidate in self.hike_candidates),
         ]
         if len(candidate_ids) != len(set(candidate_ids)):
@@ -221,7 +188,7 @@ class CurationDiagnostics(BaseModel):
     model: str
     success: bool
     fallback_reason: str | None = None
-    input_event_candidates: int
+    input_event_cards: int
     input_hike_candidates: int
     retained_options: int
     attempts: int

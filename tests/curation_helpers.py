@@ -8,6 +8,11 @@ from pydantic import HttpUrl
 from event_radar.models.curation import RecommendationContext
 from event_radar.models.direction import Direction, DirectionType
 from event_radar.models.event import Event
+from event_radar.models.event_analysis import (
+    EventOrigin,
+    SemanticConfidence,
+    WeekendEventCard,
+)
 from event_radar.models.hike_recommendation import (
     HikeAccessContext,
     HikeCandidate,
@@ -15,7 +20,6 @@ from event_radar.models.hike_recommendation import (
     HikeWindowEvaluation,
     HikeWindowWeather,
 )
-from event_radar.models.recommendation import CandidateSelection, EventEvaluation
 from event_radar.models.user_context import UserContext
 from event_radar.models.weather import (
     DailyWeather,
@@ -24,6 +28,7 @@ from event_radar.models.weather import (
     WeatherLocation,
     WeekendWeather,
 )
+from event_radar.services.event_cards import event_occurrence_fact
 from event_radar.services.hike_catalog import HikeCatalogRepository
 from event_radar.services.recommendation_context import build_recommendation_context
 from event_radar.services.user_context import UserContextRepository
@@ -44,12 +49,13 @@ def event(
     description: str | None = "A circulating public market with food and participatory art.",
     price: Decimal | None = None,
     price_details: str | None = None,
+    source_id: str = "market-series",
 ) -> Event:
     start_time = start_time or datetime(2026, 8, 8, 18, tzinfo=PACIFIC_TIME)
     return Event(
         source_name="Example Source",
-        source_id="market-series",
-        source_url=HttpUrl("https://example.com/events/market"),
+        source_id=source_id,
+        source_url=HttpUrl(f"https://example.com/events/{source_id}"),
         title=title,
         description=description,
         start_time=start_time,
@@ -64,19 +70,27 @@ def event(
     )
 
 
-def event_selection(events: list[Event] | None = None) -> CandidateSelection:
-    values = events or [event()]
-    evaluations = [
-        EventEvaluation(
-            event=value,
-            eligible=True,
-            score=17 - index,
-            reasons=["public market [title]", "evening timing"],
-            activity_type="market",
-        )
-        for index, value in enumerate(values)
-    ]
-    return CandidateSelection(evaluations=evaluations, candidates=evaluations)
+def event_card(source_event: Event | None = None) -> WeekendEventCard:
+    source_event = source_event or event()
+    occurrence = event_occurrence_fact(source_event)
+    return WeekendEventCard(
+        candidate_id=occurrence.event_id,
+        origin=EventOrigin.SCRAPED,
+        title=source_event.title,
+        occurrences=[occurrence],
+        experience_summary="A public market with circulation and participatory art.",
+        experience_modes=["market", "participatory art"],
+        interaction_architecture="Circulation and shared activities create conversation hooks.",
+        solo_viability="Normal to attend solo.",
+        active_value="Light walking and exploration.",
+        distinctiveness="A locally grounded community gathering.",
+        social_opportunity="Plausible but not guaranteed.",
+        friction_summary="Local and comparatively low-friction.",
+        schedule_observation="No known recurring-availability conflict.",
+        uncertainties=["Attendance is unknown."],
+        source_confidence=SemanticConfidence.HIGH,
+        semantic_analysis_available=True,
+    )
 
 
 def hike_selection() -> HikeCandidateSelection:
@@ -189,6 +203,7 @@ def recommendation_context(*, events: list[Event] | None = None) -> Recommendati
             update_id=2,
         )
     ]
+    values = events or [event()]
     return build_recommendation_context(
         generated_at=START,
         weekend_start=START,
@@ -197,6 +212,6 @@ def recommendation_context(*, events: list[Event] | None = None) -> Recommendati
         permanent_directions=directions,
         temporary_directions=temporary,
         baseline_weather=baseline_weather(),
-        event_selection=event_selection(events),
+        event_cards=[event_card(value) for value in values],
         hike_selection=hike_selection(),
     )

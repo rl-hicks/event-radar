@@ -14,8 +14,6 @@ from event_radar.models.curation import (
 
 
 class CurationError(RuntimeError):
-    """Raised when automated curation cannot produce a trustworthy result."""
-
     def __init__(
         self,
         message: str,
@@ -59,8 +57,11 @@ class OpenAICurationService:
         if client is None:
             if not self._api_key:
                 raise CurationError("OpenAI API key is not configured.")
-            client = AsyncOpenAI(api_key=self._api_key, timeout=self._timeout_seconds)
-
+            client = AsyncOpenAI(
+                api_key=self._api_key,
+                timeout=self._timeout_seconds,
+                max_retries=0,
+            )
         try:
             instructions = self._prompt_path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -68,17 +69,8 @@ class OpenAICurationService:
 
         input_text = context.model_dump_json(exclude_none=False)
         started = monotonic()
-        last_reference_error: CurationReferenceError | None = None
-
+        correction = ""
         for attempt in range(1, 3):
-            correction = ""
-            if last_reference_error is not None:
-                correction = (
-                    "\n\nCORRECTION REQUIRED: Your previous response used invalid candidate "
-                    "references. Use each supplied candidate_id at most once, preserve its exact "
-                    "candidate_type, do not place a retained option among near-misses, and return "
-                    f"no more than {self._config.maximum_retained_options} options."
-                )
             try:
                 response = await client.responses.parse(
                     model=self._model,
@@ -90,32 +82,23 @@ class OpenAICurationService:
                 )
             except Exception as exc:
                 raise CurationError(
-                    "OpenAI curation request failed.",
+                    f"OpenAI final-curation request failed ({type(exc).__name__}).",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
                 ) from exc
-
-            if response.status == "incomplete":
+            if response.status == "incomplete" or response.error is not None:
                 raise CurationError(
-                    "OpenAI curation response was incomplete.",
+                    "OpenAI final-curation response was incomplete or erroneous.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
                 )
-            if response.error is not None:
-                raise CurationError(
-                    "OpenAI curation response contained an API error.",
-                    attempts=attempt,
-                    latency_seconds=monotonic() - started,
-                )
-
             curation = response.output_parsed
             if curation is None:
                 raise CurationError(
-                    "OpenAI curation was refused or had no structured result.",
+                    "OpenAI final curation returned no structured result.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
                 )
-
             try:
                 validate_curation_references(
                     context,
@@ -124,32 +107,34 @@ class OpenAICurationService:
                 )
             except CurationReferenceError as exc:
                 if attempt == 1:
-                    last_reference_error = exc
+                    correction = (
+                        "\n\nCORRECTION REQUIRED: Use only supplied candidate IDs, preserve "
+                        "candidate_type, use each candidate at most once, do not repeat a retained "
+                        "option as a near-miss, and respect the option maximum."
+                    )
                     continue
                 raise CurationError(
-                    "OpenAI curation remained semantically invalid after one corrective retry.",
+                    "Final curation remained invalid after one corrective retry.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
                 ) from exc
 
-            latency = monotonic() - started
             usage = response.usage
             diagnostics = CurationDiagnostics(
                 model=self._model,
                 success=True,
-                input_event_candidates=len(context.event_candidates),
+                input_event_cards=len(context.event_cards),
                 input_hike_candidates=len(context.hike_candidates),
                 retained_options=len(curation.options),
                 attempts=attempt,
-                latency_seconds=latency,
-                input_tokens=usage.input_tokens if usage is not None else None,
-                output_tokens=usage.output_tokens if usage is not None else None,
-                total_tokens=usage.total_tokens if usage is not None else None,
+                latency_seconds=monotonic() - started,
+                input_tokens=usage.input_tokens if usage else None,
+                output_tokens=usage.output_tokens if usage else None,
+                total_tokens=usage.total_tokens if usage else None,
             )
             _log_diagnostics(diagnostics)
             return CurationOutcome(curation=curation, diagnostics=diagnostics)
-
-        raise CurationError("OpenAI curation did not produce a valid result.")
+        raise CurationError("OpenAI final curation produced no valid result.")
 
 
 async def curate_with_fallback(
@@ -163,7 +148,7 @@ async def curate_with_fallback(
             model=service.model,
             success=False,
             fallback_reason=str(exc),
-            input_event_candidates=len(context.event_candidates),
+            input_event_cards=len(context.event_cards),
             input_hike_candidates=len(context.hike_candidates),
             retained_options=0,
             attempts=exc.attempts,
@@ -181,9 +166,8 @@ def validate_curation_references(
 ) -> None:
     if len(curation.options) > maximum_options:
         raise CurationReferenceError("Curation exceeded the option maximum.")
-
     allowed: dict[str, CandidateType] = {
-        candidate.candidate_id: CandidateType.EVENT for candidate in context.event_candidates
+        candidate.candidate_id: CandidateType.EVENT for candidate in context.event_cards
     }
     allowed.update(
         {candidate.candidate_id: CandidateType.HIKE for candidate in context.hike_candidates}
@@ -198,7 +182,6 @@ def validate_curation_references(
         if option.candidate_id in retained:
             raise CurationReferenceError("Curation retained a candidate more than once.")
         retained.add(option.candidate_id)
-
     near_misses: set[str] = set()
     for near_miss in curation.notable_near_misses:
         expected_type = allowed.get(near_miss.candidate_id)
@@ -214,16 +197,14 @@ def validate_curation_references(
 
 
 def _log_diagnostics(diagnostics: CurationDiagnostics) -> None:
-    status = "success" if diagnostics.success else "fallback"
     latency = (
         f"{diagnostics.latency_seconds:.2f}s" if diagnostics.latency_seconds is not None else "n/a"
     )
     print(
-        "Curation "
-        f"status={status} model={diagnostics.model} "
-        f"events={diagnostics.input_event_candidates} "
-        f"hikes={diagnostics.input_hike_candidates} "
-        f"retained={diagnostics.retained_options} "
+        "AI stage=final_curation "
+        f"status={'success' if diagnostics.success else 'fallback'} "
+        f"model={diagnostics.model} events={diagnostics.input_event_cards} "
+        f"hikes={diagnostics.input_hike_candidates} retained={diagnostics.retained_options} "
         f"attempts={diagnostics.attempts} latency={latency} "
         f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'}"
     )

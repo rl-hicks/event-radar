@@ -16,8 +16,9 @@ config/user_context.json
 .private-state/
 state/*.json
 
-# Generated decision packets
+# Generated decision packets and local pipeline audits
 output/
+audit/
 
 # Editors
 .vscode/

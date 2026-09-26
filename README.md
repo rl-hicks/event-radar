@@ -1,19 +1,27 @@
 # Event Radar
 
 Event Radar collects Sonoma County weekend events, evaluates a curated North Bay hike
-catalog against trailhead weather, compresses both inventories deterministically, and uses
-an automated OpenAI research-editor pass to prepare a high-signal ChatGPT decision packet.
+catalog against trailhead weather, and uses a three-stage OpenAI pipeline to prepare a
+high-signal ChatGPT decision packet.
 
 The automated curation layer preserves optionality; it does not choose a final itinerary.
 The owner's private Telegram conversation receives a compact summary and the full Markdown
 packet as a document.
+
+Every factually valid, deduplicated scraped event reaches semantic analysis. A separate
+Responses API web-search stage can add verified weekend events, and the final curator sees
+the resulting unscored event cards alongside hikes, weather, directions, and user context.
+The legacy deterministic event scorer remains available only as an audit diagnostic.
 
 ## Requirements
 
 - Python 3.13
 - `uv`
 - Telegram bot credentials for one owner/private-chat conversation
-- An OpenAI API key for automated curation (the deterministic fallback works without one)
+- An OpenAI API key for semantic event analysis, web discovery, and final curation
+
+If an AI stage is unavailable, Event Radar reports that fallback explicitly. Scraped-event
+analysis failure preserves broad factual event cards; web-discovery failure adds no web events.
 
 ## Setup
 
@@ -39,6 +47,17 @@ uv run event-radar
 ```
 
 Generated ChatGPT packets are written under the gitignored `output/` directory.
+
+Run the same read-only pipeline locally, without polling or sending Telegram or mutating
+direction state, with:
+
+```bash
+uv run event-radar --audit
+```
+
+The audit writes gitignored stage artifacts under `audit/<weekend-Friday>/`. Add
+`--no-llm` to inspect factual collection, legacy diagnostics, hikes, weather, and a broad
+factual context without making any OpenAI calls.
 
 
 ## Production on GitHub Actions
@@ -67,8 +86,10 @@ permanent directions, and temporary directions are copied back and committed to 
 state repository. The user context is read-only, generated packets remain ephemeral, and
 application failures do not persist partially updated state.
 
-The `Event Radar` workflow is intentionally `workflow_dispatch`-only. Weekly scheduling will
-be enabled only after a successful manual cloud verification.
+The `Event Radar` workflow runs automatically every Thursday around 12:15 PM
+America/Los_Angeles, while `workflow_dispatch` remains available for manual runs. Two UTC
+schedules plus a Pacific-time guard account for daylight-saving changes. GitHub-hosted
+scheduled workflows may occasionally start later than the nominal cron time.
 
 ## Verification
 

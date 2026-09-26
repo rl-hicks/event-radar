@@ -7,8 +7,6 @@ from event_radar.curation_config import DEFAULT_CURATION_CONFIG, CurationConfig
 from event_radar.models.curation import (
     BaselineWeatherContext,
     DailyWeatherContext,
-    EventCandidateContext,
-    EventProvenanceContext,
     HikeCandidateContext,
     HikeWeatherContext,
     ImportantUnknown,
@@ -17,8 +15,8 @@ from event_radar.models.curation import (
 )
 from event_radar.models.direction import Direction
 from event_radar.models.event import Event
+from event_radar.models.event_analysis import WeekendEventCard
 from event_radar.models.hike_recommendation import HikeCandidate, HikeCandidateSelection
-from event_radar.models.recommendation import CandidateSelection, EventEvaluation
 from event_radar.models.user_context import UserContext
 from event_radar.models.weather import WeekendWeather
 
@@ -34,28 +32,23 @@ def build_recommendation_context(
     permanent_directions: list[Direction],
     temporary_directions: list[Direction],
     baseline_weather: WeekendWeather | None,
-    event_selection: CandidateSelection,
+    event_cards: list[WeekendEventCard],
     hike_selection: HikeCandidateSelection,
+    event_pipeline_notes: list[str] | None = None,
     config: CurationConfig = DEFAULT_CURATION_CONFIG,
 ) -> RecommendationContext:
-    if config.event_description_max_characters < 1:
-        raise ValueError("Event description limit must be positive.")
-
-    event_candidates = [
-        _event_context(evaluation, config)
-        for evaluation in event_selection.candidates[: config.maximum_event_candidates]
-    ]
     hike_candidates = [
         _hike_context(candidate)
         for candidate in hike_selection.candidates[: config.maximum_hike_candidates]
     ]
+    notes = event_pipeline_notes or []
     known_unknowns = _known_unknowns(
-        event_candidates=event_candidates,
+        event_cards=event_cards,
         hike_candidates=hike_candidates,
         baseline_weather=baseline_weather,
         hike_weather_failures=hike_selection.weather_location_failures,
+        event_pipeline_notes=notes,
     )
-
     return RecommendationContext(
         generated_at=generated_at,
         weekend_start=weekend_start,
@@ -64,9 +57,10 @@ def build_recommendation_context(
         permanent_directions=[direction.text for direction in permanent_directions],
         temporary_directions=[direction.text for direction in temporary_directions],
         baseline_weather=_weather_context(baseline_weather),
-        event_candidates=event_candidates,
+        event_cards=event_cards,
         hike_candidates=hike_candidates,
         known_unknowns=known_unknowns,
+        event_pipeline_notes=notes,
     )
 
 
@@ -88,41 +82,6 @@ def event_candidate_id(event: Event) -> str:
 def recommendation_context_size(context: RecommendationContext) -> tuple[int, int]:
     characters = len(context.model_dump_json())
     return characters, (characters + 3) // 4
-
-
-def _event_context(
-    evaluation: EventEvaluation,
-    config: CurationConfig,
-) -> EventCandidateContext:
-    event = evaluation.event
-    return EventCandidateContext(
-        candidate_id=event_candidate_id(event),
-        title=event.title,
-        start_time=event.start_time,
-        end_time=event.end_time,
-        city=event.city,
-        venue=event.venue,
-        categories=sorted(event.categories),
-        description=_bounded(event.description, config.event_description_max_characters),
-        deterministic_score=evaluation.score,
-        deterministic_reasons=evaluation.reasons,
-        activity_type=evaluation.activity_type,
-        price_min=event.price_min,
-        price_max=event.price_max,
-        price_currency=event.price_currency,
-        price_details=event.price_details,
-        source_name=event.source_name,
-        source_id=event.source_id,
-        source_url=event.source_url,
-        alternate_sources=[
-            EventProvenanceContext(
-                source_name=source.source_name,
-                source_id=source.source_id,
-                source_url=source.source_url,
-            )
-            for source in event.alternate_sources
-        ],
-    )
 
 
 def _hike_context(candidate: HikeCandidate) -> HikeCandidateContext:
@@ -197,20 +156,24 @@ def _weather_context(weather: WeekendWeather | None) -> BaselineWeatherContext |
 
 def _known_unknowns(
     *,
-    event_candidates: list[EventCandidateContext],
+    event_cards: list[WeekendEventCard],
     hike_candidates: list[HikeCandidateContext],
     baseline_weather: WeekendWeather | None,
     hike_weather_failures: int,
+    event_pipeline_notes: list[str],
 ) -> list[ImportantUnknown]:
     unknowns: list[ImportantUnknown] = []
-    if any(event.price_min is None and event.price_max is None for event in event_candidates):
+    occurrences = [occurrence for card in event_cards for occurrence in card.occurrences]
+    if any(
+        occurrence.price_min is None and occurrence.price_max is None for occurrence in occurrences
+    ):
         unknowns.append(
             ImportantUnknown(
                 kind=ImportantUnknownKind.EVENT_PRICE,
-                detail="Event prices remain unknown where source data does not provide them.",
+                detail="Event prices remain unknown where source evidence does not provide them.",
             )
         )
-    if event_candidates or hike_candidates:
+    if event_cards or hike_candidates:
         unknowns.extend(
             [
                 ImportantUnknown(
@@ -226,13 +189,20 @@ def _known_unknowns(
                 ),
             ]
         )
-    if event_candidates:
+    if event_cards:
         unknowns.append(
             ImportantUnknown(
                 kind=ImportantUnknownKind.EVENT_AVAILABILITY,
                 detail="Ticket and registration availability is not verified.",
             )
         )
+    for note in event_pipeline_notes:
+        kind = (
+            ImportantUnknownKind.WEB_DISCOVERY
+            if "web discovery" in note.casefold()
+            else ImportantUnknownKind.EVENT_ANALYSIS
+        )
+        unknowns.append(ImportantUnknown(kind=kind, detail=note))
     if hike_candidates:
         unknowns.extend(
             [
@@ -273,18 +243,10 @@ def _known_unknowns(
                 detail="; ".join(weather_details) + ".",
             )
         )
-    return unknowns
-
-
-def _bounded(value: str | None, limit: int) -> str | None:
-    if value is None:
-        return None
-    normalized = " ".join(value.split())
-    if len(normalized) <= limit:
-        return normalized
-    if limit <= 3:
-        return normalized[:limit]
-    return normalized[: limit - 3].rstrip() + "..."
+    by_kind: dict[ImportantUnknownKind, ImportantUnknown] = {}
+    for unknown in unknowns:
+        by_kind.setdefault(unknown.kind, unknown)
+    return list(by_kind.values())
 
 
 def _normalize(value: str) -> str:

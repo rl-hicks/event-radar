@@ -6,12 +6,12 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from event_radar.main import fetch_baseline_weather
 from event_radar.models.weather import (
     WeatherCondition,
     WeatherLocation,
     weather_condition_from_code,
 )
+from event_radar.services.pipeline import fetch_baseline_weather
 from event_radar.services.weather import (
     DAILY_VARIABLES,
     HOURLY_VARIABLES,

@@ -183,6 +183,7 @@ def parse_happening_sonoma_event(record: dict[str, object]) -> Event | None:
             price_max=price.maximum if price is not None else None,
             price_currency=price.currency if price is not None else None,
             price_details=price.source_text if price is not None else None,
+            price_conflict=price.conflict if price is not None else False,
         )
     except ValidationError:
         return None
