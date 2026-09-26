@@ -88,8 +88,9 @@ application failures do not persist partially updated state.
 
 The `Event Radar` workflow runs automatically every Thursday around 12:15 PM
 America/Los_Angeles, while `workflow_dispatch` remains available for manual runs. Two UTC
-schedules plus a Pacific-time guard account for daylight-saving changes. GitHub-hosted
-scheduled workflows may occasionally start later than the nominal cron time.
+cron entries account for PDT/PST; the lightweight guard intentionally skips the entry that
+does not match the current Pacific UTC offset. GitHub-hosted scheduled workflows may start
+later than the nominal cron time without being rejected by the guard.
 
 ## Verification
 
