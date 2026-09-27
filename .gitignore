@@ -11,6 +11,7 @@ __pycache__/
 # Environment secrets
 .env
 config/user_context.json
+config/personal_experience_preference_context.md
 
 # Private production state checkout and materialized runtime state
 .private-state/

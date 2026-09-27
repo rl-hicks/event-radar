@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from event_radar.models.event_analysis import WeekendEventCard
-from event_radar.models.user_context import UserContext
+from event_radar.models.user_context import StructuredRuntimeContext
 from event_radar.models.weather import WeatherCondition
 
 
@@ -117,7 +117,8 @@ class RecommendationContext(BaseModel):
     generated_at: datetime
     weekend_start: datetime
     weekend_end: datetime
-    user_context: UserContext
+    user_context: StructuredRuntimeContext
+    personal_experience_context: str = Field(min_length=1)
     permanent_directions: list[str]
     temporary_directions: list[str]
     baseline_weather: BaselineWeatherContext | None
@@ -171,6 +172,14 @@ class CuratedOption(BaseModel):
     confidence: CurationConfidence
 
 
+class EventCuratedOption(CuratedOption):
+    candidate_type: Literal[CandidateType.EVENT] = CandidateType.EVENT
+
+
+class HikeCuratedOption(CuratedOption):
+    candidate_type: Literal[CandidateType.HIKE] = CandidateType.HIKE
+
+
 class NearMiss(BaseModel):
     candidate_type: CandidateType
     candidate_id: str = Field(min_length=1)
@@ -179,7 +188,8 @@ class NearMiss(BaseModel):
 
 class WeekendCuration(BaseModel):
     weekend_read: list[str] = Field(max_length=6)
-    options: list[CuratedOption] = Field(max_length=18)
+    event_options: list[EventCuratedOption] = Field(max_length=22)
+    hike_options: list[HikeCuratedOption] = Field(max_length=6)
     notable_near_misses: list[NearMiss] = Field(max_length=10)
     important_unknowns: list[ImportantUnknown] = Field(max_length=12)
 
@@ -190,7 +200,9 @@ class CurationDiagnostics(BaseModel):
     fallback_reason: str | None = None
     input_event_cards: int
     input_hike_candidates: int
-    retained_options: int
+    retained_event_count: int
+    retained_hike_count: int
+    retained_total_count: int
     attempts: int
     latency_seconds: float | None = None
     input_tokens: int | None = None

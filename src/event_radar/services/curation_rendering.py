@@ -1,11 +1,10 @@
-from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime, time
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from event_radar.models.curation import (
-    CandidateType,
     CuratedOption,
     CurationOutcome,
     CurationRole,
@@ -17,6 +16,7 @@ from event_radar.models.event_analysis import EventOccurrenceFact, WeekendEventC
 
 _ROLE_HEADINGS = {
     CurationRole.STANDOUT: "Standout opportunities",
+    CurationRole.STRONG: "Strong event candidates",
     CurationRole.DISTINCT: "Distinct / unusual options",
     CurationRole.LOW_FRICTION: "Low-friction options",
     CurationRole.SCHEDULE_CONFLICT: "Schedule-conflicting but notable",
@@ -37,13 +37,14 @@ def render_chatgpt_packet(context: RecommendationContext, outcome: CurationOutco
         "## How to use this packet",
         "",
         "This is a curated decision set, not a predetermined itinerary.",
+        "The event pool is curated separately; independent hikes are additive and do not "
+        "consume event slots. Guided hikes discovered on event calendars remain events.",
         "",
         "## User context",
         "",
         f"- Profile: {context.user_context.profile_label}",
         f"- Home base: {context.user_context.base_location.name}",
-        f"- Objective: {context.user_context.core_objective}",
-        f"- Social posture: {context.user_context.social_posture.objective}",
+        "- Personal experience policy: loaded from the private canonical Markdown context.",
         f"- Hiking posture: {context.user_context.hiking_posture.destination_posture}",
     ]
     for window in context.user_context.recurring_availability:
@@ -78,7 +79,8 @@ def render_chatgpt_packet(context: RecommendationContext, outcome: CurationOutco
     if outcome.curation is None:
         lines.extend(_fallback_candidates(context, timezone))
     else:
-        lines.extend(_curated_candidates(context, outcome.curation.options, timezone))
+        lines.extend(_curated_event_candidates(context, outcome.curation.event_options, timezone))
+        lines.extend(_curated_hikes(context, outcome.curation.hike_options, timezone))
         lines.extend(["", "## Important unknowns", ""])
         lines.extend(
             _bullets(
@@ -137,19 +139,21 @@ def render_telegram_curation_summary(
         )
     else:
         event_lookup, hike_lookup = _candidate_lookups(context)
-        counts = Counter(option.candidate_type for option in outcome.curation.options)
+        event_options = outcome.curation.event_options
+        hike_options = outcome.curation.hike_options
         lines.append("Weekend read")
         lines.extend(f"- {item}" for item in outcome.curation.weekend_read[:3])
         lines.extend(
             [
                 "",
-                f"Curated decision set: {len(outcome.curation.options)} worthwhile possibilities",
-                f"Events retained: {counts[CandidateType.EVENT]}",
-                f"Hikes retained: {counts[CandidateType.HIKE]}",
+                f"Curated event pool: {len(event_options)} worthwhile event possibilities",
+                f"Independent hikes retained separately: {len(hike_options)}",
             ]
         )
         standouts = [
-            option for option in outcome.curation.options if option.role is CurationRole.STANDOUT
+            option
+            for option in [*event_options, *hike_options]
+            if option.role is CurationRole.STANDOUT
         ]
         if standouts:
             lines.extend(["", "Standouts"])
@@ -182,53 +186,42 @@ def write_chatgpt_packet(
     return path
 
 
-def _curated_candidates(
+def _curated_event_candidates(
     context: RecommendationContext,
-    options: list[CuratedOption],
+    options: Sequence[CuratedOption],
     timezone: ZoneInfo,
 ) -> list[str]:
-    event_lookup, hike_lookup = _candidate_lookups(context)
-    sections: list[tuple[str, list[CuratedOption]]] = [
-        (
-            "Standout opportunities",
-            [option for option in options if option.role is CurationRole.STANDOUT],
-        ),
-        (
-            "Strong event candidates",
-            [
-                option
-                for option in options
-                if option.role is CurationRole.STRONG
-                and option.candidate_type is CandidateType.EVENT
-            ],
-        ),
-        (
-            "Strong hike candidates",
-            [
-                option
-                for option in options
-                if option.role is CurationRole.STRONG
-                and option.candidate_type is CandidateType.HIKE
-            ],
-        ),
-    ]
-    for role, heading in _ROLE_HEADINGS.items():
-        if role is not CurationRole.STANDOUT:
-            sections.append((heading, [option for option in options if option.role is role]))
+    event_lookup, _ = _candidate_lookups(context)
     lines: list[str] = []
-    rendered: set[str] = set()
-    for heading, values in sections:
-        values = [value for value in values if value.candidate_id not in rendered]
+    for role, heading in _ROLE_HEADINGS.items():
+        values = [option for option in options if option.role is role]
         if not values:
             continue
         lines.extend(["", f"## {heading}", ""])
         for option in values:
-            rendered.add(option.candidate_id)
-            event = event_lookup.get(option.candidate_id)
-            if event is not None:
-                lines.extend(_render_event(event, option, timezone))
-            else:
-                lines.extend(_render_hike(hike_lookup[option.candidate_id], option, timezone))
+            lines.extend(_render_event(event_lookup[option.candidate_id], option, timezone))
+    if not options:
+        lines.extend(["", "## Event candidates", "", "No events were retained."])
+    return lines
+
+
+def _curated_hikes(
+    context: RecommendationContext,
+    options: Sequence[CuratedOption],
+    timezone: ZoneInfo,
+) -> list[str]:
+    _, hike_lookup = _candidate_lookups(context)
+    lines = [
+        "",
+        "## Potential independent hikes",
+        "",
+        "These self-directed hikes are additive and do not consume event slots.",
+        "",
+    ]
+    for option in options:
+        lines.extend(_render_hike(hike_lookup[option.candidate_id], option, timezone))
+    if not options:
+        lines.append("No independent hikes were retained.")
     return lines
 
 
@@ -238,7 +231,11 @@ def _fallback_candidates(context: RecommendationContext, timezone: ZoneInfo) -> 
         lines.extend(_render_event(event, None, timezone))
     if not context.event_cards:
         lines.append("No factual event cards were available.")
-    lines.extend(["", "## Deterministic hike candidates", ""])
+    lines.extend(["", "## Potential independent hikes", ""])
+    lines.append(
+        "These uncurated deterministic hike candidates are additive to the event inventory."
+    )
+    lines.append("")
     for hike in context.hike_candidates:
         lines.extend(_render_hike(hike, None, timezone))
     if not context.hike_candidates:
@@ -285,9 +282,6 @@ def _render_occurrence(
     location = ", ".join(
         part for part in (occurrence.venue, occurrence.city, occurrence.state) if part
     )
-    source_links = "; ".join(
-        f"[{source.source_name}]({source.source_url})" for source in occurrence.sources
-    )
     rendered_time = format_event_time_range(occurrence.start_time, occurrence.end_time, timezone)
     lines = [
         f"- Occurrence {index}: `{occurrence.event_id}`",
@@ -295,8 +289,25 @@ def _render_occurrence(
         f"  - Where: {location}",
         f"  - Categories: {', '.join(occurrence.categories) or 'unknown'}",
         f"  - Price: {_price(occurrence)}",
-        f"  - Sources: {source_links}",
     ]
+    if any(source.supported_claims for source in occurrence.sources):
+        lines.append("  - Sources:")
+        for source in occurrence.sources:
+            claim_labels = {
+                "event_existence": "event existence",
+                "date_time": "date/time",
+                "location": "location",
+                "price": "price",
+                "experience_description": "experience/details",
+            }
+            claims = ", ".join(claim_labels[claim.value] for claim in source.supported_claims)
+            suffix = f" — {claims}" if claims else ""
+            lines.append(f"    - [{source.source_name}]({source.source_url}){suffix}")
+    else:
+        source_links = "; ".join(
+            f"[{source.source_name}]({source.source_url})" for source in occurrence.sources
+        )
+        lines.append(f"  - Sources: {source_links}")
     if occurrence.description:
         lines.append(f"  - Source description: {occurrence.description}")
     return lines

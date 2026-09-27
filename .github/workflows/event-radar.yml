@@ -75,6 +75,7 @@ jobs:
 
           required_files=(
             config/user_context.json
+            config/personal_experience_preference_context.md
             state/telegram_offset.json
             state/permanent_directions.json
             state/temporary_directions.json
@@ -88,6 +89,9 @@ jobs:
 
           install -d -m 700 config state
           install -m 600 .private-state/config/user_context.json config/user_context.json
+          install -m 600 \
+            .private-state/config/personal_experience_preference_context.md \
+            config/personal_experience_preference_context.md
           install -m 600 .private-state/state/telegram_offset.json state/telegram_offset.json
           install -m 600 .private-state/state/permanent_directions.json state/permanent_directions.json
           install -m 600 .private-state/state/temporary_directions.json state/temporary_directions.json

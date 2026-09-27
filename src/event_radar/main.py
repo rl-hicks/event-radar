@@ -25,6 +25,7 @@ from event_radar.services.event_analysis import OpenAIEventAnalysisService
 from event_radar.services.event_evaluation import format_selection_diagnostics
 from event_radar.services.hike_suitability import format_hike_diagnostics
 from event_radar.services.llm_curation import OpenAICurationService, curate_with_fallback
+from event_radar.services.personal_context import PersonalExperienceContextRepository
 from event_radar.services.pipeline import (
     EventIntelligenceResult,
     RecommendationPipelineResult,
@@ -125,16 +126,22 @@ async def run_audit(*, run_llm: bool = True) -> None:
         f"web cards={len(intelligence.web_event_cards)}, "
         f"combined={len(intelligence.combined_event_cards)}, "
         f"hikes={len(intelligence.context.hike_candidates)}, "
-        f"retained={audit.retained_option_count}"
+        f"retained_events={audit.retained_event_count}, "
+        f"retained_hikes={audit.retained_hike_count}, "
+        f"retained_total={audit.retained_option_count}"
     )
 
 
 async def _build_current_pipeline() -> RecommendationPipelineResult:
     generated_at = datetime.now(PACIFIC_TIME)
     user_context = UserContextRepository(settings.user_context_path).load()
+    personal_context = PersonalExperienceContextRepository(
+        settings.personal_experience_context_path
+    ).load()
     return await build_recommendation_pipeline(
         generated_at=generated_at,
         user_context=user_context,
+        personal_context=personal_context,
         permanent_directions=load_permanent_directions(),
         temporary_directions=load_temporary_directions(),
         runtime_settings=settings,
@@ -187,7 +194,9 @@ def _uncurated_outcome(context: RecommendationContext, reason: str) -> CurationO
             fallback_reason=reason,
             input_event_cards=len(context.event_cards),
             input_hike_candidates=len(context.hike_candidates),
-            retained_options=0,
+            retained_event_count=0,
+            retained_hike_count=0,
+            retained_total_count=0,
             attempts=0,
         ),
     )
@@ -248,7 +257,9 @@ def _print_pipeline_diagnostics(
     print(
         f"- final_curation: {'success' if outcome.diagnostics.success else 'fallback'}, "
         f"model={outcome.diagnostics.model}, attempts={outcome.diagnostics.attempts}, "
-        f"retained={outcome.diagnostics.retained_options}, "
+        f"retained_events={outcome.diagnostics.retained_event_count}, "
+        f"retained_hikes={outcome.diagnostics.retained_hike_count}, "
+        f"retained_total={outcome.diagnostics.retained_total_count}, "
         f"tokens={outcome.diagnostics.total_tokens or 'n/a'}, "
         f"latency={outcome.diagnostics.latency_seconds or 0:.2f}s"
     )

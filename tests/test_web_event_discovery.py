@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -8,14 +9,19 @@ import pytest
 from openai import AsyncOpenAI, BadRequestError
 from pydantic import ValidationError
 
-from event_radar.models.event_analysis import SemanticConfidence
+from event_radar.models.ai import AIStageDiagnostics
+from event_radar.models.event_analysis import EventEvidenceClaim, SemanticConfidence
 from event_radar.models.web_discovery import (
     DiscoveredEvent,
+    WebDiscoveryOutcome,
     WebDiscoveryResult,
+    WebEvidenceSource,
 )
 from event_radar.services.event_cards import (
     build_scraped_analysis_request,
     build_web_discovery_request,
+    build_web_event_cards,
+    event_occurrence_fact,
     remove_exact_web_duplicates,
 )
 from event_radar.services.web_event_discovery import (
@@ -33,19 +39,55 @@ def request():
         weekend_start=START,
         weekend_end=END,
         user_context=example_user_context(),
+        personal_experience_context="Recall-oriented test projection.",
         permanent_directions=[],
         temporary_directions=[],
         events=[event()],
     )
-    return analysis_request, build_web_discovery_request(analysis_request)
+    return analysis_request, build_web_discovery_request(
+        analysis_request,
+        personal_experience_context="Discovery-oriented test projection.",
+    )
 
 
-def discovery(*, identifier: str = "web-1", title: str = "Guided Art Workshop") -> DiscoveredEvent:
+def evidence_source(
+    *,
+    url: str = "https://organizer.example/workshop",
+    name: str = "Official event page",
+    claims: list[EventEvidenceClaim] | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+) -> WebEvidenceSource:
+    claims = claims or [
+        EventEvidenceClaim.EVENT_EXISTENCE,
+        EventEvidenceClaim.DATE_TIME,
+        EventEvidenceClaim.LOCATION,
+        EventEvidenceClaim.EXPERIENCE_DESCRIPTION,
+    ]
+    supports_time = EventEvidenceClaim.DATE_TIME in claims
+    start_time = start_time or START.replace(hour=15)
+    end_time = end_time or START.replace(hour=17)
+    return WebEvidenceSource(
+        source_url=url,
+        source_name=name,
+        supported_claims=claims,
+        source_confidence=SemanticConfidence.HIGH,
+        evidence_summary="Official source supports its listed claims.",
+        occurrence_start_time=start_time if supports_time else None,
+        occurrence_end_time=end_time if supports_time else None,
+    )
+
+
+def discovery(
+    *,
+    identifier: str = "web-1",
+    title: str = "Guided Art Workshop",
+    evidence_sources: list[WebEvidenceSource] | None = None,
+) -> DiscoveredEvent:
     return DiscoveredEvent(
         discovery_id=identifier,
         title=title,
-        source_url="https://organizer.example/workshop",
-        source_name="Official organizer",
+        evidence_sources=evidence_sources or [evidence_source()],
         start_time=START.replace(hour=15),
         end_time=START.replace(hour=17),
         venue="Studio",
@@ -63,7 +105,6 @@ def discovery(*, identifier: str = "web-1", title: str = "Guided Art Workshop") 
         schedule_observation="Open Saturday afternoon.",
         uncertainties=["Availability not verified."],
         verification_confidence=SemanticConfidence.HIGH,
-        source_confidence=SemanticConfidence.HIGH,
     )
 
 
@@ -89,13 +130,10 @@ def test_web_discovery_requires_evidence_and_timezone_aware_time() -> None:
                 "start_time": "2026-08-08T15:00:00",
             }
         )
+    payload = discovery().model_dump()
+    payload["evidence_sources"][0]["source_url"] = "not a URL"
     with pytest.raises(ValidationError):
-        DiscoveredEvent.model_validate(
-            {
-                **discovery().model_dump(),
-                "source_url": "not a URL",
-            }
-        )
+        DiscoveredEvent.model_validate(payload)
 
 
 def test_exact_scraped_duplicate_is_removed_conservatively() -> None:
@@ -130,6 +168,145 @@ def test_discovery_validation_rejects_duplicate_ids_and_out_of_window_events() -
     outside = discovery().model_copy(update={"start_time": value.weekend_end})
     with pytest.raises(ValueError, match="outside"):
         _validate_discoveries(value, [outside])
+
+
+def test_one_official_event_page_can_support_all_required_claims() -> None:
+    _, value = request()
+    found = discovery()
+
+    _validate_discoveries(value, [found])
+
+    assert len(found.evidence_sources) == 1
+
+
+def test_calendar_time_and_operator_details_form_valid_evidence_chain() -> None:
+    _, value = request()
+    calendar = evidence_source(
+        url="https://calendar.example/weekend-event",
+        name="Regional event calendar",
+        claims=[
+            EventEvidenceClaim.EVENT_EXISTENCE,
+            EventEvidenceClaim.DATE_TIME,
+            EventEvidenceClaim.LOCATION,
+        ],
+    )
+    operator = evidence_source(
+        url="https://operator.example/activity",
+        name="Official operator",
+        claims=[EventEvidenceClaim.EXPERIENCE_DESCRIPTION],
+    )
+    found = discovery(evidence_sources=[calendar, operator])
+
+    _validate_discoveries(value, [found])
+
+    assert [source.source_name for source in found.evidence_sources] == [
+        "Regional event calendar",
+        "Official operator",
+    ]
+
+
+def test_generic_operator_page_without_occurrence_time_is_invalid() -> None:
+    _, value = request()
+    generic = evidence_source(
+        claims=[
+            EventEvidenceClaim.EVENT_EXISTENCE,
+            EventEvidenceClaim.LOCATION,
+            EventEvidenceClaim.EXPERIENCE_DESCRIPTION,
+        ]
+    )
+
+    with pytest.raises(ValueError, match="date_time"):
+        _validate_discoveries(value, [discovery(evidence_sources=[generic])])
+
+
+def test_claimed_occurrence_must_match_source_extracted_time() -> None:
+    _, value = request()
+    wrong_time = evidence_source(start_time=START.replace(hour=14))
+
+    with pytest.raises(ValueError, match="start time is not directly supported"):
+        _validate_discoveries(value, [discovery(evidence_sources=[wrong_time])])
+
+
+def test_multiple_evidence_sources_survive_into_web_event_card() -> None:
+    calendar = evidence_source(
+        url="https://calendar.example/weekend-event",
+        name="Regional event calendar",
+        claims=[
+            EventEvidenceClaim.EVENT_EXISTENCE,
+            EventEvidenceClaim.DATE_TIME,
+            EventEvidenceClaim.LOCATION,
+        ],
+    )
+    operator = evidence_source(
+        url="https://operator.example/activity",
+        name="Official operator",
+        claims=[EventEvidenceClaim.EXPERIENCE_DESCRIPTION],
+    )
+
+    card = build_web_event_cards([discovery(evidence_sources=[calendar, operator])])[0]
+    sources = card.occurrences[0].sources
+
+    assert [source.source_name for source in sources] == [
+        "Regional event calendar",
+        "Official operator",
+    ]
+    assert sources[0].supported_claims == calendar.supported_claims
+    assert sources[1].supported_claims == operator.supported_claims
+
+
+def test_scraped_event_source_provenance_is_unchanged() -> None:
+    source_event = event()
+    occurrence = event_occurrence_fact(source_event)
+
+    assert len(occurrence.sources) == 1
+    assert occurrence.sources[0].source_name == source_event.source_name
+    assert occurrence.sources[0].source_url == source_event.source_url
+    assert occurrence.sources[0].supported_claims == []
+    assert occurrence.sources[0].source_confidence is None
+
+
+def test_serialized_web_discovery_audit_payload_preserves_evidence_chain() -> None:
+    calendar = evidence_source(
+        url="https://calendar.example/weekend-event",
+        name="Regional event calendar",
+        claims=[
+            EventEvidenceClaim.EVENT_EXISTENCE,
+            EventEvidenceClaim.DATE_TIME,
+            EventEvidenceClaim.LOCATION,
+        ],
+    )
+    operator = evidence_source(
+        url="https://operator.example/activity",
+        name="Official operator",
+        claims=[EventEvidenceClaim.EXPERIENCE_DESCRIPTION],
+    )
+    found = discovery(evidence_sources=[calendar, operator])
+    outcome = WebDiscoveryOutcome(
+        result=WebDiscoveryResult(discoveries=[found]),
+        valid_discoveries=[found],
+        duplicates_removed=0,
+        diagnostics=AIStageDiagnostics(
+            stage="web_event_discovery",
+            model="test",
+            success=True,
+            input_count=0,
+            result_count=1,
+            attempts=1,
+            tool_calls=1,
+        ),
+    )
+
+    payload = json.loads(outcome.model_dump_json())
+    sources = payload["result"]["discoveries"][0]["evidence_sources"]
+
+    assert len(sources) == 2
+    assert sources[0]["supported_claims"] == [
+        "event_existence",
+        "date_time",
+        "location",
+    ]
+    assert sources[0]["occurrence_start_time"] == found.start_time.isoformat()
+    assert sources[1]["supported_claims"] == ["experience_description"]
 
 
 class FakeResponses:
@@ -179,6 +356,8 @@ async def test_web_search_service_uses_official_tool_and_accepts_zero_results() 
         "timezone": value.user_context.base_location.timezone,
     }
     assert fake.responses.calls[0]["tool_choice"] == "required"
+    assert "Discovery-oriented test projection." in cast(str, fake.responses.calls[0]["input"])
+    assert "category_priors" not in cast(str, fake.responses.calls[0]["input"])
     assert fake.responses.calls[0]["max_tool_calls"] == 6
     assert fake.responses.calls[0]["reasoning"] == {"effort": "low"}
     assert tool["search_context_size"] == "low"
@@ -195,18 +374,23 @@ async def test_successful_search_preserves_source_evidence() -> None:
         usage=None,
         output=[SimpleNamespace(type="web_search_call")],
     )
+    responses = FakeResponses(response)
     service = OpenAIWebDiscoveryService(
         api_key="test",
         model="gpt-5.6",
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
-        client=cast(AsyncOpenAI, SimpleNamespace(responses=FakeResponses(response))),
+        client=cast(AsyncOpenAI, SimpleNamespace(responses=responses)),
     )
 
     outcome = await service.discover(value)
 
-    assert outcome.valid_discoveries[0].source_url == "https://organizer.example/workshop"
+    assert (
+        outcome.valid_discoveries[0].evidence_sources[0].source_url
+        == "https://organizer.example/workshop"
+    )
     assert outcome.diagnostics.tool_calls == 1
+    assert len(responses.calls) == 1
 
 
 @pytest.mark.asyncio

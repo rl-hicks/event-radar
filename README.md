@@ -76,21 +76,33 @@ Configure these Actions secrets on the public repository:
 - `TELEGRAM_OWNER_USER_ID`
 
 The private state repository is the production source of truth for
-`config/user_context.json` and the three `state/*.json` files. At runtime, the workflow
-copies those files into the application's normal paths without printing their contents.
+`config/user_context.json`, `config/personal_experience_preference_context.md`, and the three
+`state/*.json` files. At runtime, the workflow copies those files into the application's
+normal paths without printing their contents.
 It runs the locked quality checks and the existing `uv run event-radar` CLI. Telegram
 remains the only delivery mechanism for the private summary and Markdown decision packet.
 
 After the application and complete Telegram delivery succeed, only the Telegram offset,
 permanent directions, and temporary directions are copied back and committed to the private
-state repository. The user context is read-only, generated packets remain ephemeral, and
-application failures do not persist partially updated state.
+state repository. The user context and personal preference policy are read-only, generated
+packets remain ephemeral, and application failures do not persist partially updated state.
 
 The `Event Radar` workflow runs automatically every Thursday around 12:15 PM
 America/Los_Angeles, while `workflow_dispatch` remains available for manual runs. Two UTC
 cron entries account for PDT/PST; the lightweight guard intentionally skips the entry that
 does not match the current Pacific UTC offset. GitHub-hosted scheduled workflows may start
 later than the nominal cron time without being rejected by the guard.
+
+## Private personalization and curation shape
+
+The private state repository supplies both `config/user_context.json` for structured runtime
+facts and `config/personal_experience_preference_context.md` as the canonical AI taste policy.
+Neither real file is committed to this public repository.
+
+Final curation normally targets roughly 12-18 worthwhile events, with flexible underflow on
+weak weekends and modest overflow on unusually rich weekends. Independent self-directed hikes
+are additive and do not consume event slots. Guided hikes discovered through event sources
+remain events.
 
 ## Verification
 

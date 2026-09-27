@@ -163,3 +163,27 @@ class UserContext(BaseModel):
         if self.cost_tolerance[-1].maximum_dollars is not None:
             raise ValueError("Cost tolerance must end with an open-ended band.")
         return self
+
+
+class StructuredRuntimeContext(BaseModel):
+    """Factual/operational user fields supplied to AI; taste lives in private Markdown."""
+
+    profile_id: str = Field(min_length=1)
+    profile_label: str = Field(min_length=1)
+    base_location: UserBaseLocation
+    drive_tolerance: list[DriveToleranceBand] = Field(min_length=1)
+    cost_tolerance: list[CostToleranceBand] = Field(min_length=1)
+    hiking_posture: HikingPosture
+    recurring_availability: list[AvailabilityWindow] = Field(min_length=1)
+
+
+def structured_runtime_context(context: UserContext) -> StructuredRuntimeContext:
+    return StructuredRuntimeContext(
+        profile_id=context.profile_id,
+        profile_label=context.profile_label,
+        base_location=context.base_location,
+        drive_tolerance=context.drive_tolerance,
+        cost_tolerance=context.cost_tolerance,
+        hiking_posture=context.hiking_posture,
+        recurring_availability=context.recurring_availability,
+    )

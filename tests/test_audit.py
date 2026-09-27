@@ -32,6 +32,7 @@ from tests.curation_helpers import (
     PACIFIC_TIME,
     START,
     baseline_weather,
+    example_personal_context,
     example_user_context,
     hike_selection,
 )
@@ -63,6 +64,7 @@ def fixture_pipeline() -> RecommendationPipelineResult:
         weekend_start=START,
         weekend_end=END,
         user_context=example_user_context(),
+        personal_context=example_personal_context(),
         permanent_directions=[],
         temporary_directions=[],
         sonoma_tourism_events=events[:1],
@@ -89,7 +91,9 @@ def outcome(event_count: int, hike_count: int) -> CurationOutcome:
             fallback_reason="Disabled.",
             input_event_cards=event_count,
             input_hike_candidates=hike_count,
-            retained_options=0,
+            retained_event_count=0,
+            retained_hike_count=0,
+            retained_total_count=0,
             attempts=0,
         ),
     )
@@ -130,9 +134,16 @@ def test_new_audit_artifacts_expose_ai_pipeline_and_legacy_is_diagnostic(
         "11-recommendation-context.json",
         "12-final-curation.json",
         "13-final-packet.md",
+        "personal-context-ai1.md",
+        "personal-context-ai2.md",
+        "personal-context-ai3.md",
     }
     manifest = json.loads((result.output_directory / "00-manifest.json").read_text())
     assert manifest["sent_to_scraped_event_analysis"] == 3
+    assert manifest["personal_experience_context"]["loaded"] is True
+    assert manifest["personal_experience_context"]["path"].endswith(
+        "personal_experience_preference_context.md"
+    )
     assert manifest["source_status"]["sonoma_tourism"] == {
         "success": True,
         "count": 1,
@@ -151,6 +162,15 @@ def test_new_audit_artifacts_expose_ai_pipeline_and_legacy_is_diagnostic(
     assert len(cards) == 3
     assert context == intelligence.context.model_dump(mode="json")
     assert context["event_cards"] == cards
+    assert (result.output_directory / "personal-context-ai1.md").read_text() == (
+        intelligence.analysis_request.personal_experience_context
+    )
+    assert (result.output_directory / "personal-context-ai2.md").read_text() == (
+        intelligence.web_request.personal_experience_context
+    )
+    assert (result.output_directory / "personal-context-ai3.md").read_text() == (
+        intelligence.context.personal_experience_context
+    )
 
     legacy = (result.output_directory / "05-legacy-deterministic-evaluation.md").read_text()
     assert "Diagnostic comparison only" in legacy
@@ -245,7 +265,7 @@ async def test_audit_execution_never_enters_telegram_or_state_mutation(
         **kwargs: object,
     ) -> AuditWriteResult:
         wrote.append(True)
-        return AuditWriteResult(tmp_path / "audit", 0)
+        return AuditWriteResult(tmp_path / "audit", 0, 0)
 
     monkeypatch.setattr(main_module, "_build_current_pipeline", build_pipeline)
     monkeypatch.setattr(

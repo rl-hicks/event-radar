@@ -16,12 +16,13 @@ from event_radar.collectors.sonoma_county import (
 from event_radar.models.ai import AIStageDiagnostics
 from event_radar.models.curation import CurationDiagnostics, CurationOutcome
 from event_radar.models.event import Event
-from event_radar.models.event_analysis import SemanticConfidence
+from event_radar.models.event_analysis import EventEvidenceClaim, SemanticConfidence
 from event_radar.models.web_discovery import (
     DiscoveredEvent,
     WebDiscoveryOutcome,
     WebDiscoveryRequest,
     WebDiscoveryResult,
+    WebEvidenceSource,
 )
 from event_radar.services.curation_rendering import render_chatgpt_packet
 from event_radar.services.event_deduplication import DeduplicationResult
@@ -36,6 +37,7 @@ from tests.curation_helpers import (
     END,
     PACIFIC_TIME,
     START,
+    example_personal_context,
     example_user_context,
     hike_selection,
 )
@@ -130,6 +132,7 @@ def _empty_failed_pipeline() -> RecommendationPipelineResult:
         weekend_start=START,
         weekend_end=END,
         user_context=example_user_context(),
+        personal_context=example_personal_context(),
         permanent_directions=[],
         temporary_directions=[],
         sonoma_tourism_events=[],
@@ -160,8 +163,22 @@ def _discovered_event() -> DiscoveredEvent:
     return DiscoveredEvent(
         discovery_id="web_discovery",
         title="Verified Web Event",
-        source_url="https://example.org/verified-event",
-        source_name="Official organizer",
+        evidence_sources=[
+            WebEvidenceSource(
+                source_url="https://example.org/verified-event",
+                source_name="Official organizer",
+                supported_claims=[
+                    EventEvidenceClaim.EVENT_EXISTENCE,
+                    EventEvidenceClaim.DATE_TIME,
+                    EventEvidenceClaim.LOCATION,
+                    EventEvidenceClaim.EXPERIENCE_DESCRIPTION,
+                ],
+                source_confidence=SemanticConfidence.HIGH,
+                evidence_summary="Official page lists the event details and occurrence.",
+                occurrence_start_time=start,
+                occurrence_end_time=start + timedelta(hours=2),
+            )
+        ],
         start_time=start,
         end_time=start + timedelta(hours=2),
         venue="Community Hall",
@@ -179,7 +196,6 @@ def _discovered_event() -> DiscoveredEvent:
         schedule_observation="No known conflict.",
         uncertainties=["Attendance unknown."],
         verification_confidence=SemanticConfidence.HIGH,
-        source_confidence=SemanticConfidence.HIGH,
     )
 
 
@@ -247,7 +263,9 @@ async def test_zero_scraped_inventory_skips_ai1_but_runs_web_and_builds_web_hike
             fallback_reason="not invoked in unit test",
             input_event_cards=1,
             input_hike_candidates=1,
-            retained_options=0,
+            retained_event_count=0,
+            retained_hike_count=0,
+            retained_total_count=0,
             attempts=0,
         ),
     )

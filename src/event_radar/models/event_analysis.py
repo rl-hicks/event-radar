@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from event_radar.models.ai import AIStageDiagnostics
-from event_radar.models.user_context import UserContext
+from event_radar.models.user_context import StructuredRuntimeContext
 
 
 def _aware(value: datetime) -> datetime:
@@ -37,10 +37,20 @@ class EventOrigin(StrEnum):
     WEB_DISCOVERED = "web_discovered"
 
 
+class EventEvidenceClaim(StrEnum):
+    EVENT_EXISTENCE = "event_existence"
+    DATE_TIME = "date_time"
+    LOCATION = "location"
+    PRICE = "price"
+    EXPERIENCE_DESCRIPTION = "experience_description"
+
+
 class EventSourceFact(BaseModel):
     source_name: str = Field(min_length=1)
     source_id: str | None
     source_url: HttpUrl
+    supported_claims: list[EventEvidenceClaim] = Field(default_factory=list)
+    source_confidence: SemanticConfidence | None = None
 
 
 class EventOccurrenceFact(BaseModel):
@@ -68,7 +78,8 @@ class ScrapedEventAnalysisRequest(BaseModel):
     generated_at: datetime
     weekend_start: datetime
     weekend_end: datetime
-    user_context: UserContext
+    user_context: StructuredRuntimeContext
+    personal_experience_context: str = Field(min_length=1)
     permanent_directions: list[str]
     temporary_directions: list[str]
     events: list[EventOccurrenceFact]

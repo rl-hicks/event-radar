@@ -37,7 +37,12 @@ class LegacyEvaluationRecord(BaseModel):
 @dataclass(frozen=True)
 class AuditWriteResult:
     output_directory: Path
-    retained_option_count: int
+    retained_event_count: int
+    retained_hike_count: int
+
+    @property
+    def retained_option_count(self) -> int:
+        return self.retained_event_count + self.retained_hike_count
 
 
 def write_audit_artifacts(
@@ -73,6 +78,15 @@ def write_audit_artifacts(
             "end": pipeline.weekend_end.isoformat(),
         },
         "application_timezone": timezone.key,
+        "personal_experience_context": {
+            "path": str(pipeline.personal_context.source_path),
+            "loaded": True,
+            "ai1_projection_characters": len(
+                intelligence.analysis_request.personal_experience_context
+            ),
+            "ai2_projection_characters": len(intelligence.web_request.personal_experience_context),
+            "ai3_projection_characters": len(intelligence.context.personal_experience_context),
+        },
         "collector_counts": {
             "sonoma_tourism": len(pipeline.sonoma_tourism_events),
             "happening_sonoma": len(pipeline.happening_sonoma_events),
@@ -133,8 +147,16 @@ def write_audit_artifacts(
         "final_curation": {
             "ran": outcome.diagnostics.attempts > 0,
             "success": outcome.diagnostics.success,
-            "retained_option_count": (
-                len(outcome.curation.options) if outcome.curation is not None else 0
+            "retained_event_count": (
+                len(outcome.curation.event_options) if outcome.curation is not None else 0
+            ),
+            "retained_hike_count": (
+                len(outcome.curation.hike_options) if outcome.curation is not None else 0
+            ),
+            "retained_total_count": (
+                len(outcome.curation.event_options) + len(outcome.curation.hike_options)
+                if outcome.curation is not None
+                else 0
             ),
             "diagnostics": outcome.diagnostics.model_dump(mode="json"),
         },
@@ -186,6 +208,18 @@ def write_audit_artifacts(
         intelligence.context.model_dump_json(indent=2) + "\n",
         encoding="utf-8",
     )
+    (directory / "personal-context-ai1.md").write_text(
+        intelligence.analysis_request.personal_experience_context,
+        encoding="utf-8",
+    )
+    (directory / "personal-context-ai2.md").write_text(
+        intelligence.web_request.personal_experience_context,
+        encoding="utf-8",
+    )
+    (directory / "personal-context-ai3.md").write_text(
+        intelligence.context.personal_experience_context,
+        encoding="utf-8",
+    )
     _write_json(directory / "12-final-curation.json", outcome.model_dump(mode="json"))
     (directory / "13-final-packet.md").write_text(
         render_chatgpt_packet(intelligence.context, outcome),
@@ -193,7 +227,12 @@ def write_audit_artifacts(
     )
     return AuditWriteResult(
         output_directory=directory,
-        retained_option_count=len(outcome.curation.options) if outcome.curation else 0,
+        retained_event_count=(
+            len(outcome.curation.event_options) if outcome.curation is not None else 0
+        ),
+        retained_hike_count=(
+            len(outcome.curation.hike_options) if outcome.curation is not None else 0
+        ),
     )
 
 

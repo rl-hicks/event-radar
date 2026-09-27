@@ -23,7 +23,7 @@ from event_radar.models.hike_recommendation import HikeCandidateSelection
 from event_radar.models.recommendation import CandidateSelection
 from event_radar.models.user_context import UserContext
 from event_radar.models.weather import WeatherLocation, WeekendWeather
-from event_radar.models.web_discovery import WebDiscoveryOutcome
+from event_radar.models.web_discovery import WebDiscoveryOutcome, WebDiscoveryRequest
 from event_radar.services.event_analysis import (
     OpenAIEventAnalysisService,
     analyze_scraped_events_with_fallback,
@@ -40,6 +40,10 @@ from event_radar.services.event_evaluation import select_event_candidates
 from event_radar.services.hike_catalog import HikeCatalogRepository
 from event_radar.services.hike_suitability import build_hike_candidate_selection
 from event_radar.services.hike_weather import collect_trailhead_weather
+from event_radar.services.personal_context import (
+    PersonalContextStage,
+    PersonalExperienceContext,
+)
 from event_radar.services.recommendation_context import build_recommendation_context
 from event_radar.services.weather import (
     OpenMeteoWeatherClient,
@@ -79,6 +83,7 @@ class RecommendationPipelineResult:
     weekend_start: datetime
     weekend_end: datetime
     user_context: UserContext
+    personal_context: PersonalExperienceContext
     permanent_directions: list[Direction]
     temporary_directions: list[Direction]
     sonoma_tourism_events: list[Event]
@@ -98,6 +103,7 @@ class RecommendationPipelineResult:
 @dataclass(frozen=True)
 class EventIntelligenceResult:
     analysis_request: ScrapedEventAnalysisRequest
+    web_request: WebDiscoveryRequest
     analysis_outcome: ScrapedEventAnalysisOutcome
     web_outcome: WebDiscoveryOutcome
     scraped_event_cards: list[WeekendEventCard]
@@ -185,6 +191,7 @@ async def build_recommendation_pipeline(
     *,
     generated_at: datetime,
     user_context: UserContext,
+    personal_context: PersonalExperienceContext,
     permanent_directions: list[Direction],
     temporary_directions: list[Direction],
     runtime_settings: Settings,
@@ -256,6 +263,7 @@ async def build_recommendation_pipeline(
         weekend_start=start,
         weekend_end=end,
         user_context=user_context,
+        personal_context=personal_context,
         permanent_directions=permanent_directions,
         temporary_directions=temporary_directions,
         sonoma_tourism_events=sonoma_events,
@@ -280,7 +288,12 @@ async def build_event_intelligence(
     web_service: OpenAIWebDiscoveryService,
 ) -> EventIntelligenceResult:
     request = _analysis_request(pipeline)
-    web_request = build_web_discovery_request(request)
+    web_request = build_web_discovery_request(
+        request,
+        personal_experience_context=pipeline.personal_context.projection(
+            PersonalContextStage.WEB_EVENT_DISCOVERY
+        ),
+    )
     if request.events:
         analysis_outcome, web_outcome = await asyncio.gather(
             analyze_scraped_events_with_fallback(analysis_service, request),
@@ -340,6 +353,7 @@ async def build_event_intelligence(
     return _intelligence_result(
         pipeline,
         request=request,
+        web_request=web_request,
         analysis_outcome=analysis_outcome,
         web_outcome=web_outcome,
         scraped_cards=scraped_cards,
@@ -354,6 +368,12 @@ def build_event_intelligence_without_ai(
     reason: str,
 ) -> EventIntelligenceResult:
     request = _analysis_request(pipeline)
+    web_request = build_web_discovery_request(
+        request,
+        personal_experience_context=pipeline.personal_context.projection(
+            PersonalContextStage.WEB_EVENT_DISCOVERY
+        ),
+    )
     analysis_outcome = ScrapedEventAnalysisOutcome(
         analysis=None,
         diagnostics=AIStageDiagnostics(
@@ -384,6 +404,7 @@ def build_event_intelligence_without_ai(
     return _intelligence_result(
         pipeline,
         request=request,
+        web_request=web_request,
         analysis_outcome=analysis_outcome,
         web_outcome=web_outcome,
         scraped_cards=build_scraped_event_cards(request, None),
@@ -395,6 +416,7 @@ def _intelligence_result(
     pipeline: RecommendationPipelineResult,
     *,
     request: ScrapedEventAnalysisRequest,
+    web_request: WebDiscoveryRequest,
     analysis_outcome: ScrapedEventAnalysisOutcome,
     web_outcome: WebDiscoveryOutcome,
     scraped_cards: list[WeekendEventCard],
@@ -420,6 +442,9 @@ def _intelligence_result(
         weekend_start=pipeline.weekend_start,
         weekend_end=pipeline.weekend_end,
         user_context=pipeline.user_context,
+        personal_experience_context=pipeline.personal_context.projection(
+            PersonalContextStage.FINAL_CURATION
+        ),
         permanent_directions=pipeline.permanent_directions,
         temporary_directions=pipeline.temporary_directions,
         baseline_weather=pipeline.baseline_weather,
@@ -429,6 +454,7 @@ def _intelligence_result(
     )
     return EventIntelligenceResult(
         analysis_request=request,
+        web_request=web_request,
         analysis_outcome=analysis_outcome,
         web_outcome=web_outcome,
         scraped_event_cards=scraped_cards,
@@ -488,6 +514,9 @@ def _analysis_request(
         weekend_start=pipeline.weekend_start,
         weekend_end=pipeline.weekend_end,
         user_context=pipeline.user_context,
+        personal_experience_context=pipeline.personal_context.projection(
+            PersonalContextStage.SCRAPED_EVENT_ANALYSIS
+        ),
         permanent_directions=pipeline.permanent_directions,
         temporary_directions=pipeline.temporary_directions,
         events=pipeline.valid_events,

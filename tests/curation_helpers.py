@@ -30,12 +30,90 @@ from event_radar.models.weather import (
 )
 from event_radar.services.event_cards import event_occurrence_fact
 from event_radar.services.hike_catalog import HikeCatalogRepository
+from event_radar.services.personal_context import (
+    PersonalContextStage,
+    PersonalExperienceContext,
+)
 from event_radar.services.recommendation_context import build_recommendation_context
 from event_radar.services.user_context import UserContextRepository
 
 PACIFIC_TIME = ZoneInfo("America/Los_Angeles")
 START = datetime(2026, 8, 8, tzinfo=PACIFIC_TIME)
 END = datetime(2026, 8, 10, tzinfo=PACIFIC_TIME)
+
+
+def personal_context_markdown(*, include_version: bool = False) -> str:
+    headings = {
+        1: "PRIMARY WEEKEND OBJECTIVE",
+        2: "DEMOGRAPHIC AND SOCIAL FIT",
+        3: "SOCIAL ARCHITECTURE",
+        4: "HOW SOCIAL VALUE INTERACTS WITH EXPERIENCE VALUE",
+        5: "INCLUSION THRESHOLD",
+        6: "CORE EXPERIENCE PULL",
+        7: "MUSIC",
+        8: "FOOD EVENTS",
+        9: "FESTIVALS, MARKETS, AND OPEN EVENTS",
+        10: "COMEDY",
+        11: "LOCAL WEIRDNESS AND TRADITIONS",
+        12: "VOLUNTEERING",
+        13: "WELLNESS AND FITNESS EVENTS",
+        14: "DANCE",
+        15: "WEAK-PULL CATEGORIES",
+        16: "HISTORY AND CULTURE",
+        17: "ANIMALS AND NATURE OBSERVATION",
+        18: "ADULT / LIFE-STAGE FIT",
+        19: "ATMOSPHERE",
+        20: "FRIEND VS. SOLO ASSUMPTIONS",
+        21: "EXPERIENCE MULTIPLIERS",
+        22: "EXPERIENCE PENALTIES",
+        23: "COST AND FRICTION",
+        24: "DISCOVERY POSTURE",
+        25: "DO NOT CONFUSE THESE PAIRS",
+        26: "THE “WOULD I ACTUALLY CARE?” TEST",
+        27: "PACKET COMPOSITION",
+        28: "FINAL CURATION PRINCIPLE",
+    }
+    details = {
+        1: "Surface experiences with social value and intrinsic value.",
+        3: "Distinguish co-presence, circulation, and natural interaction.",
+        5: "Worth surfacing is a lower threshold than likely to attend.",
+        6: "Active exploration and useful capability have strong pull.",
+        15: "Generic crafts and generic workshops have weak pull.",
+        24: "Favor broad discovery when there is a credible path to personal value.",
+        25: "Do not confuse active with appealing, workshop with desirable participation, "
+        "or unusual with interesting.",
+        26: "Ask: Would I Actually Care? Generic virtues are not enough.",
+        27: "Normally surface roughly 12-18 varied events.",
+        28: "Act as a knowledgeable scout and preserve real choices.",
+    }
+    sections = ["# PERSONAL EXPERIENCE PREFERENCE CONTEXT — EVENT RADAR"]
+    if include_version:
+        sections.extend(["", "Context-Version: 1"])
+    sections.extend(
+        [
+            "",
+            "## Purpose",
+            "",
+            "Surface worthwhile discoveries; independent hikes are additive to events.",
+        ]
+    )
+    for number, heading in headings.items():
+        sections.extend(
+            [
+                "",
+                f"# {number}. {heading}",
+                "",
+                details.get(number, f"Deterministic fixture guidance for section {number}."),
+            ]
+        )
+    return "\n".join(sections) + "\n"
+
+
+def example_personal_context() -> PersonalExperienceContext:
+    return PersonalExperienceContext.from_markdown(
+        personal_context_markdown(),
+        source_path=Path("tests/fixtures/personal_experience_preference_context.md"),
+    )
 
 
 def example_user_context() -> UserContext:
@@ -209,6 +287,9 @@ def recommendation_context(*, events: list[Event] | None = None) -> Recommendati
         weekend_start=START,
         weekend_end=END,
         user_context=example_user_context(),
+        personal_experience_context=example_personal_context().projection(
+            PersonalContextStage.FINAL_CURATION
+        ),
         permanent_directions=directions,
         temporary_directions=temporary,
         baseline_weather=baseline_weather(),

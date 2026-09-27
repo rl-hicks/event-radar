@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     weather_timezone: str = "America/Los_Angeles"
     hike_catalog_path: Path = Path("data/hikes.json")
     user_context_path: Path = Path("config/user_context.json")
+    personal_experience_context_path: Path = Path(
+        "config/personal_experience_preference_context.md"
+    )
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.6"
     openai_event_analysis_model: str | None = None

@@ -21,7 +21,7 @@ from event_radar.models.event_analysis import (
     SemanticConfidence,
     WeekendEventCard,
 )
-from event_radar.models.user_context import UserContext
+from event_radar.models.user_context import UserContext, structured_runtime_context
 from event_radar.models.web_discovery import (
     DiscoveredEvent,
     ExistingEventIdentity,
@@ -42,6 +42,7 @@ def build_scraped_analysis_request(
     weekend_start: datetime,
     weekend_end: datetime,
     user_context: UserContext,
+    personal_experience_context: str,
     permanent_directions: list[Direction],
     temporary_directions: list[Direction],
     events: list[Event],
@@ -51,7 +52,8 @@ def build_scraped_analysis_request(
         generated_at=generated_at,
         weekend_start=weekend_start,
         weekend_end=weekend_end,
-        user_context=user_context,
+        user_context=structured_runtime_context(user_context),
+        personal_experience_context=personal_experience_context,
         permanent_directions=[direction.text for direction in permanent_directions],
         temporary_directions=[direction.text for direction in temporary_directions],
         events=[event_occurrence_fact(event, config=config) for event in events],
@@ -194,12 +196,15 @@ def build_scraped_event_cards(
 
 def build_web_discovery_request(
     request: ScrapedEventAnalysisRequest,
+    *,
+    personal_experience_context: str,
 ) -> WebDiscoveryRequest:
     return WebDiscoveryRequest(
         generated_at=request.generated_at,
         weekend_start=request.weekend_start,
         weekend_end=request.weekend_end,
         user_context=request.user_context,
+        personal_experience_context=personal_experience_context,
         permanent_directions=request.permanent_directions,
         temporary_directions=request.temporary_directions,
         existing_events=[
@@ -264,10 +269,13 @@ def build_web_event_cards(discoveries: list[DiscoveredEvent]) -> list[WeekendEve
             price_details=discovery.price_details,
             sources=[
                 EventSourceFact(
-                    source_name=discovery.source_name,
+                    source_name=source.source_name,
                     source_id=None,
-                    source_url=HttpUrl(discovery.source_url),
+                    source_url=HttpUrl(source.source_url),
+                    supported_claims=source.supported_claims,
+                    source_confidence=source.source_confidence,
                 )
+                for source in discovery.evidence_sources
             ],
         )
         cards.append(
@@ -286,7 +294,7 @@ def build_web_event_cards(discoveries: list[DiscoveredEvent]) -> list[WeekendEve
                 friction_summary=discovery.friction_summary,
                 schedule_observation=discovery.schedule_observation,
                 uncertainties=discovery.uncertainties,
-                source_confidence=discovery.source_confidence,
+                source_confidence=_lowest_source_confidence(discovery),
                 verification_confidence=discovery.verification_confidence,
                 semantic_analysis_available=True,
             )
@@ -352,6 +360,19 @@ def _factual_fallback_card(event: EventOccurrenceFact) -> WeekendEventCard:
 
 def _decimal_price(value: float | None) -> Decimal | None:
     return Decimal(str(value)) if value is not None else None
+
+
+def _lowest_source_confidence(discovery: DiscoveredEvent) -> SemanticConfidence:
+    order = {
+        SemanticConfidence.UNKNOWN: 0,
+        SemanticConfidence.LOW: 1,
+        SemanticConfidence.MODERATE: 2,
+        SemanticConfidence.HIGH: 3,
+    }
+    return min(
+        (source.source_confidence for source in discovery.evidence_sources),
+        key=order.__getitem__,
+    )
 
 
 def _judgment_priority(judgment: ScrapedEventJudgment) -> tuple[int, str]:

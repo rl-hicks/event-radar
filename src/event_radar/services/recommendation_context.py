@@ -17,7 +17,7 @@ from event_radar.models.direction import Direction
 from event_radar.models.event import Event
 from event_radar.models.event_analysis import WeekendEventCard
 from event_radar.models.hike_recommendation import HikeCandidate, HikeCandidateSelection
-from event_radar.models.user_context import UserContext
+from event_radar.models.user_context import UserContext, structured_runtime_context
 from event_radar.models.weather import WeekendWeather
 
 _NON_WORD_PATTERN = re.compile(r"[^\w]+", re.UNICODE)
@@ -29,6 +29,7 @@ def build_recommendation_context(
     weekend_start: datetime,
     weekend_end: datetime,
     user_context: UserContext,
+    personal_experience_context: str,
     permanent_directions: list[Direction],
     temporary_directions: list[Direction],
     baseline_weather: WeekendWeather | None,
@@ -53,7 +54,8 @@ def build_recommendation_context(
         generated_at=generated_at,
         weekend_start=weekend_start,
         weekend_end=weekend_end,
-        user_context=user_context,
+        user_context=structured_runtime_context(user_context),
+        personal_experience_context=personal_experience_context,
         permanent_directions=[direction.text for direction in permanent_directions],
         temporary_directions=[direction.text for direction in temporary_directions],
         baseline_weather=_weather_context(baseline_weather),

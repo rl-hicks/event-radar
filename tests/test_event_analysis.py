@@ -59,6 +59,7 @@ def request(count: int = 3):
         weekend_start=START,
         weekend_end=END,
         user_context=example_user_context(),
+        personal_experience_context="Recall-oriented test projection.",
         permanent_directions=[],
         temporary_directions=[],
         events=events,
@@ -74,6 +75,9 @@ def test_every_valid_scraped_event_reaches_ai_one_without_legacy_anchors() -> No
     assert "deterministic_reasons" not in payload
     assert "activity_type" not in payload
     assert "rank" not in payload
+    assert value.personal_experience_context == "Recall-oriented test projection."
+    assert "category_priors" not in payload
+    assert "social_posture" not in payload
 
 
 def test_analysis_prompt_is_recall_oriented_and_biases_uncertainty_to_borderline() -> None:
@@ -196,6 +200,7 @@ async def test_analysis_service_validates_structured_output_and_logs_usage() -> 
     assert outcome.diagnostics.total_tokens == 120
     sent = cast(str, fake.responses.calls[0]["input"])
     assert "deterministic_score" not in sent
+    assert "Recall-oriented test projection." in sent
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from time import monotonic
 from openai import APIStatusError, AsyncOpenAI
 
 from event_radar.models.ai import AIStageDiagnostics
+from event_radar.models.event_analysis import EventEvidenceClaim
 from event_radar.models.web_discovery import (
     DiscoveredEvent,
     WebDiscoveryOutcome,
@@ -137,7 +138,9 @@ class OpenAIWebDiscoveryService:
                     correction = (
                         "\n\nCORRECTION REQUIRED: Return unique discovery IDs, official or "
                         "credible evidence URLs, timezone-aware start times inside the supplied "
-                        "weekend window, and no more than 12 discoveries. Do not fabricate facts."
+                        "weekend window, claim-specific evidence sources, and an evidence "
+                        "source whose extracted occurrence time exactly matches every claimed "
+                        "start/end. Do not fabricate facts."
                     )
                     continue
                 raise WebDiscoveryError(
@@ -277,6 +280,48 @@ def _validate_discoveries(
             and discovery.price_max < discovery.price_min
         ):
             raise ValueError("Discovered event has an invalid price range.")
+
+        supported_claims = {
+            claim for source in discovery.evidence_sources for claim in source.supported_claims
+        }
+        required_claims = {
+            EventEvidenceClaim.EVENT_EXISTENCE,
+            EventEvidenceClaim.DATE_TIME,
+            EventEvidenceClaim.LOCATION,
+            EventEvidenceClaim.EXPERIENCE_DESCRIPTION,
+        }
+        missing_claims = required_claims - supported_claims
+        if missing_claims:
+            missing = ", ".join(sorted(claim.value for claim in missing_claims))
+            raise ValueError(f"Discovered event is missing required evidence claims: {missing}.")
+
+        time_sources = [
+            source
+            for source in discovery.evidence_sources
+            if EventEvidenceClaim.DATE_TIME in source.supported_claims
+        ]
+        if not any(source.occurrence_start_time == discovery.start_time for source in time_sources):
+            raise ValueError(
+                "Discovered event start time is not directly supported by an evidence source."
+            )
+        if discovery.end_time is not None and not any(
+            source.occurrence_end_time == discovery.end_time for source in time_sources
+        ):
+            raise ValueError(
+                "Discovered event end time is not directly supported by an evidence source."
+            )
+
+        has_price = any(
+            value is not None
+            for value in (
+                discovery.price_min,
+                discovery.price_max,
+                discovery.price_currency,
+                discovery.price_details,
+            )
+        )
+        if has_price and EventEvidenceClaim.PRICE not in supported_claims:
+            raise ValueError("Discovered event price is not supported by an evidence source.")
 
 
 def _log(diagnostics: AIStageDiagnostics) -> None:

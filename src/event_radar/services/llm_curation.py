@@ -103,14 +103,17 @@ class OpenAICurationService:
                 validate_curation_references(
                     context,
                     curation,
-                    maximum_options=self._config.maximum_retained_options,
+                    maximum_event_options=self._config.maximum_event_options,
+                    maximum_hike_options=self._config.maximum_hike_options,
                 )
             except CurationReferenceError as exc:
                 if attempt == 1:
                     correction = (
                         "\n\nCORRECTION REQUIRED: Use only supplied candidate IDs, preserve "
-                        "candidate_type, use each candidate at most once, do not repeat a retained "
-                        "option as a near-miss, and respect the option maximum."
+                        "candidate_type, place events only in event_options and independent hikes "
+                        "only in hike_options, use each candidate at most once, do not repeat a "
+                        "retained option as a near-miss, and respect the separate "
+                        "collection maxima."
                     )
                     continue
                 raise CurationError(
@@ -125,7 +128,9 @@ class OpenAICurationService:
                 success=True,
                 input_event_cards=len(context.event_cards),
                 input_hike_candidates=len(context.hike_candidates),
-                retained_options=len(curation.options),
+                retained_event_count=len(curation.event_options),
+                retained_hike_count=len(curation.hike_options),
+                retained_total_count=len(curation.event_options) + len(curation.hike_options),
                 attempts=attempt,
                 latency_seconds=monotonic() - started,
                 input_tokens=usage.input_tokens if usage else None,
@@ -150,7 +155,9 @@ async def curate_with_fallback(
             fallback_reason=str(exc),
             input_event_cards=len(context.event_cards),
             input_hike_candidates=len(context.hike_candidates),
-            retained_options=0,
+            retained_event_count=0,
+            retained_hike_count=0,
+            retained_total_count=0,
             attempts=exc.attempts,
             latency_seconds=exc.latency_seconds,
         )
@@ -162,26 +169,38 @@ def validate_curation_references(
     context: RecommendationContext,
     curation: WeekendCuration,
     *,
-    maximum_options: int = 18,
+    maximum_event_options: int = 22,
+    maximum_hike_options: int = 6,
 ) -> None:
-    if len(curation.options) > maximum_options:
-        raise CurationReferenceError("Curation exceeded the option maximum.")
-    allowed: dict[str, CandidateType] = {
-        candidate.candidate_id: CandidateType.EVENT for candidate in context.event_cards
-    }
-    allowed.update(
-        {candidate.candidate_id: CandidateType.HIKE for candidate in context.hike_candidates}
-    )
+    if len(curation.event_options) > maximum_event_options:
+        raise CurationReferenceError("Curation exceeded the event-option maximum.")
+    if len(curation.hike_options) > maximum_hike_options:
+        raise CurationReferenceError("Curation exceeded the hike-option maximum.")
+
+    allowed_events = {candidate.candidate_id for candidate in context.event_cards}
+    allowed_hikes = {candidate.candidate_id for candidate in context.hike_candidates}
     retained: set[str] = set()
-    for option in curation.options:
-        expected_type = allowed.get(option.candidate_id)
-        if expected_type is None:
-            raise CurationReferenceError("Curation referenced an unknown candidate ID.")
-        if option.candidate_type is not expected_type:
-            raise CurationReferenceError("Curation used the wrong candidate type.")
-        if option.candidate_id in retained:
+    for event_option in curation.event_options:
+        if event_option.candidate_id not in allowed_events:
+            raise CurationReferenceError(
+                "Event curation referenced an unknown or non-event candidate ID."
+            )
+        if event_option.candidate_id in retained:
             raise CurationReferenceError("Curation retained a candidate more than once.")
-        retained.add(option.candidate_id)
+        retained.add(event_option.candidate_id)
+    for hike_option in curation.hike_options:
+        if hike_option.candidate_id not in allowed_hikes:
+            raise CurationReferenceError(
+                "Hike curation referenced an unknown or non-hike candidate ID."
+            )
+        if hike_option.candidate_id in retained:
+            raise CurationReferenceError("Curation retained a candidate more than once.")
+        retained.add(hike_option.candidate_id)
+
+    allowed: dict[str, CandidateType] = {
+        **{candidate_id: CandidateType.EVENT for candidate_id in allowed_events},
+        **{candidate_id: CandidateType.HIKE for candidate_id in allowed_hikes},
+    }
     near_misses: set[str] = set()
     for near_miss in curation.notable_near_misses:
         expected_type = allowed.get(near_miss.candidate_id)
@@ -204,7 +223,10 @@ def _log_diagnostics(diagnostics: CurationDiagnostics) -> None:
         "AI stage=final_curation "
         f"status={'success' if diagnostics.success else 'fallback'} "
         f"model={diagnostics.model} events={diagnostics.input_event_cards} "
-        f"hikes={diagnostics.input_hike_candidates} retained={diagnostics.retained_options} "
+        f"hikes={diagnostics.input_hike_candidates} "
+        f"retained_events={diagnostics.retained_event_count} "
+        f"retained_hikes={diagnostics.retained_hike_count} "
+        f"retained_total={diagnostics.retained_total_count} "
         f"attempts={diagnostics.attempts} latency={latency} "
         f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'}"
     )
