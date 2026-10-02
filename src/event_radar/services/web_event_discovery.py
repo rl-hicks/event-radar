@@ -4,10 +4,10 @@ from time import monotonic
 
 from openai import APIStatusError, AsyncOpenAI
 
+from event_radar.config import settings
 from event_radar.models.ai import AIStageDiagnostics
 from event_radar.models.event_analysis import EventEvidenceClaim
 from event_radar.models.token_usage import (
-    DEFAULT_MODEL_TOKEN_PRICING,
     ModelTokenPricing,
     TokenUsage,
     aggregate_token_usage,
@@ -59,14 +59,14 @@ class OpenAIWebDiscoveryService:
         prompt_path: Path,
         timeout_seconds: float,
         client: AsyncOpenAI | None = None,
-        pricing: ModelTokenPricing = DEFAULT_MODEL_TOKEN_PRICING,
+        pricing: ModelTokenPricing | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._prompt_path = prompt_path
         self._timeout_seconds = timeout_seconds
         self._client = client
-        self._pricing = pricing
+        self._pricing = pricing or ModelTokenPricing.from_settings(settings, model)
 
     @property
     def model(self) -> str:

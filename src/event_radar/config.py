@@ -1,9 +1,16 @@
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"
+DEFAULT_OPENAI_MODEL = "gpt-5.6"
+DEFAULT_WEB_DISCOVERY_MODEL = "gpt-6.1-sol"
+
+
+class ModelPricingRates(BaseModel):
+    input_usd_per_million: float = Field(ge=0)
+    cached_input_usd_per_million: float | None = Field(default=None, ge=0)
+    output_usd_per_million: float = Field(ge=0)
 
 
 class Settings(BaseSettings):
@@ -23,11 +30,25 @@ class Settings(BaseSettings):
     )
     openai_api_key: SecretStr | None = None
     openai_model: str = DEFAULT_OPENAI_MODEL
-    openai_input_usd_per_million: float = Field(default=2.00, ge=0)
-    openai_cached_input_usd_per_million: float = Field(default=0.10, ge=0)
-    openai_output_usd_per_million: float = Field(default=10.00, ge=0)
+    # Standard token-only estimates, keyed by the exact requested model ID.
+    # https://developers.openai.com/api/docs/models/gpt-5.6-sol (gpt-5.6 alias)
+    # https://developers.openai.com/api/docs/models/gpt-6.1-sol
+    openai_model_pricing: dict[str, ModelPricingRates] = Field(
+        default_factory=lambda: {
+            DEFAULT_OPENAI_MODEL: ModelPricingRates(
+                input_usd_per_million=4.00,
+                cached_input_usd_per_million=0.40,
+                output_usd_per_million=20.00,
+            ),
+            DEFAULT_WEB_DISCOVERY_MODEL: ModelPricingRates(
+                input_usd_per_million=2.00,
+                cached_input_usd_per_million=0.10,
+                output_usd_per_million=10.00,
+            ),
+        }
+    )
     openai_event_analysis_model: str | None = None
-    openai_web_discovery_model: str | None = None
+    openai_web_discovery_model: str | None = DEFAULT_WEB_DISCOVERY_MODEL
     openai_curation_model: str | None = None
     openai_timeout_seconds: float = Field(default=120.0, gt=0)
     event_analysis_prompt_path: Path = Path("prompts/event_analysis.md")

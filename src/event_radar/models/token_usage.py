@@ -5,25 +5,25 @@ from typing import TypedDict
 
 from pydantic import BaseModel
 
-from event_radar.config import Settings, settings
+from event_radar.config import Settings
 
 
 @dataclass(frozen=True)
 class ModelTokenPricing:
     input_usd_per_million: float
-    cached_input_usd_per_million: float
+    cached_input_usd_per_million: float | None
     output_usd_per_million: float
 
     @classmethod
-    def from_settings(cls, config: Settings) -> "ModelTokenPricing":
+    def from_settings(cls, config: Settings, model: str) -> "ModelTokenPricing | None":
+        rates = config.openai_model_pricing.get(model)
+        if rates is None:
+            return None
         return cls(
-            config.openai_input_usd_per_million,
-            config.openai_cached_input_usd_per_million,
-            config.openai_output_usd_per_million,
+            rates.input_usd_per_million,
+            rates.cached_input_usd_per_million,
+            rates.output_usd_per_million,
         )
-
-
-DEFAULT_MODEL_TOKEN_PRICING = ModelTokenPricing.from_settings(settings)
 
 
 class TokenUsage(BaseModel):
@@ -34,9 +34,7 @@ class TokenUsage(BaseModel):
     estimated_model_cost_usd: float | None = None
 
 
-def parse_token_usage(
-    usage: object, pricing: ModelTokenPricing = DEFAULT_MODEL_TOKEN_PRICING
-) -> TokenUsage:
+def parse_token_usage(usage: object, pricing: ModelTokenPricing | None) -> TokenUsage:
     """Missing counts remain unknown; absent cache details assume no cache discount.
 
     Estimates cover model tokens only, excluding web-search fees and tier premiums.
@@ -52,13 +50,15 @@ def parse_token_usage(
         output_tokens=count(usage, "output_tokens"),
         total_tokens=count(usage, "total_tokens"),
     )
-    if result.input_tokens is not None and result.output_tokens is not None:
+    if pricing is not None and result.input_tokens is not None and result.output_tokens is not None:
         cached = result.cached_input_tokens or 0
+        if cached and pricing.cached_input_usd_per_million is None:
+            return result  # A total estimate would require guessing the cache rate.
         normal = max(result.input_tokens - cached, 0)
         result.estimated_model_cost_usd = float(
             (
                 normal * Decimal(str(pricing.input_usd_per_million))
-                + cached * Decimal(str(pricing.cached_input_usd_per_million))
+                + cached * Decimal(str(pricing.cached_input_usd_per_million or 0))
                 + result.output_tokens * Decimal(str(pricing.output_usd_per_million))
             )
             / Decimal(1_000_000)

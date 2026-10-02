@@ -3,7 +3,7 @@ from time import monotonic
 
 from openai import AsyncOpenAI
 
-from event_radar.config import DEFAULT_OPENAI_MODEL
+from event_radar.config import DEFAULT_OPENAI_MODEL, settings
 from event_radar.curation_config import DEFAULT_CURATION_CONFIG, CurationConfig
 from event_radar.models.curation import (
     CandidateType,
@@ -13,7 +13,6 @@ from event_radar.models.curation import (
     WeekendCuration,
 )
 from event_radar.models.token_usage import (
-    DEFAULT_MODEL_TOKEN_PRICING,
     ModelTokenPricing,
     TokenUsage,
     aggregate_token_usage,
@@ -51,7 +50,7 @@ class OpenAICurationService:
         prompt_path: Path = Path("prompts/weekend_curation.md"),
         timeout_seconds: float = 20.0,
         client: AsyncOpenAI | None = None,
-        pricing: ModelTokenPricing = DEFAULT_MODEL_TOKEN_PRICING,
+        pricing: ModelTokenPricing | None = None,
         config: CurationConfig = DEFAULT_CURATION_CONFIG,
     ) -> None:
         self._api_key = api_key
@@ -59,7 +58,7 @@ class OpenAICurationService:
         self._prompt_path = prompt_path
         self._timeout_seconds = timeout_seconds
         self._client = client
-        self._pricing = pricing
+        self._pricing = pricing or ModelTokenPricing.from_settings(settings, model)
         self._config = config
 
     @property

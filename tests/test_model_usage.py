@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 from openai import AsyncOpenAI
 
-from event_radar.config import DEFAULT_OPENAI_MODEL, Settings
+from event_radar.config import DEFAULT_OPENAI_MODEL, DEFAULT_WEB_DISCOVERY_MODEL, Settings
 from event_radar.curation_config import DEFAULT_CURATION_CONFIG
 from event_radar.models.token_usage import (
     ModelTokenPricing,
@@ -15,7 +15,10 @@ from event_radar.models.token_usage import (
     parse_token_usage,
 )
 from event_radar.models.web_discovery import WebDiscoveryResult
-from event_radar.services.event_analysis import analyze_scraped_events_with_fallback
+from event_radar.services.event_analysis import (
+    OpenAIEventAnalysisService,
+    analyze_scraped_events_with_fallback,
+)
 from event_radar.services.llm_curation import OpenAICurationService, curate_with_fallback
 from event_radar.services.web_event_discovery import (
     OpenAIWebDiscoveryService,
@@ -23,11 +26,20 @@ from event_radar.services.web_event_discovery import (
 )
 from tests.test_event_analysis import request as analysis_request
 from tests.test_event_analysis_batching import BatchResponses
-from tests.test_event_analysis_batching import service as analysis_service
 from tests.test_llm_curation import FakeClient, curation, recommendation_context, response, service
 from tests.test_web_event_discovery import request as web_request
 
 PRICING = ModelTokenPricing(2.0, 0.1, 10.0)
+
+
+def analysis_service(responses):
+    return OpenAIEventAnalysisService(
+        api_key="synthetic-key",
+        model=DEFAULT_OPENAI_MODEL,
+        prompt_path=Path("prompts/event_analysis.md"),
+        timeout_seconds=120,
+        client=cast(AsyncOpenAI, SimpleNamespace(responses=responses)),
+    )
 
 
 def usage(cached=40):
@@ -46,21 +58,18 @@ def test_central_model_and_configuration(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
     config = Settings(_env_file=None)
-    assert DEFAULT_OPENAI_MODEL == "gpt-6.1-sol"
+    assert DEFAULT_OPENAI_MODEL == "gpt-5.6"
+    assert DEFAULT_WEB_DISCOVERY_MODEL == "gpt-6.1-sol"
     assert config.resolved_event_analysis_model == DEFAULT_OPENAI_MODEL
-    assert config.resolved_web_discovery_model == DEFAULT_OPENAI_MODEL
+    assert config.resolved_web_discovery_model == DEFAULT_WEB_DISCOVERY_MODEL
     assert config.resolved_curation_model == DEFAULT_OPENAI_MODEL
     assert OpenAICurationService(api_key=None).model == DEFAULT_OPENAI_MODEL
     assert config.openai_timeout_seconds == 120
     assert DEFAULT_CURATION_CONFIG.reasoning_effort == "medium"
-    for field, rate in [
-        ("openai_input_usd_per_million", 2),
-        ("openai_cached_input_usd_per_million", 0.1),
-        ("openai_output_usd_per_million", 10),
-    ]:
-        assert Settings.model_fields[field].default == rate
-    overridden = Settings(_env_file=None, openai_input_usd_per_million=3)
-    assert ModelTokenPricing.from_settings(overridden).input_usd_per_million == 3
+    assert ModelTokenPricing.from_settings(config, DEFAULT_OPENAI_MODEL) == ModelTokenPricing(
+        4, 0.4, 20
+    )
+    assert ModelTokenPricing.from_settings(config, DEFAULT_WEB_DISCOVERY_MODEL) == PRICING
 
 
 @pytest.mark.parametrize(
@@ -114,9 +123,9 @@ async def test_batches_and_all_stages_aggregate_with_valid_reasoning(capsys):
     assert analysis.diagnostics.cached_input_tokens == 120
     assert analysis.diagnostics.output_tokens == 60
     assert analysis.diagnostics.total_tokens == 360
-    assert analysis.diagnostics.estimated_model_cost_usd == pytest.approx(3 * 0.000324)
+    assert analysis.diagnostics.estimated_model_cost_usd == pytest.approx(3 * 0.000656)
     for batch in analysis.diagnostics.batches:
-        assert batch.estimated_model_cost_usd == pytest.approx(0.000324)
+        assert batch.estimated_model_cost_usd == pytest.approx(0.000656)
     _, request2 = web_request()
     web_response = SimpleNamespace(
         status="completed",
@@ -128,11 +137,10 @@ async def test_batches_and_all_stages_aggregate_with_valid_reasoning(capsys):
     fake_web = FakeClient([web_response])
     web_service = OpenAIWebDiscoveryService(
         api_key="test",
-        model=DEFAULT_OPENAI_MODEL,
+        model=DEFAULT_WEB_DISCOVERY_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, fake_web),
-        pricing=PRICING,
     )
     web = await web_service.discover(request2)
     final_response = response(curation())
@@ -144,7 +152,23 @@ async def test_batches_and_all_stages_aggregate_with_valid_reasoning(capsys):
     assert aggregate.cached_input_tokens == 200
     assert aggregate.output_tokens == 100
     assert aggregate.total_tokens == 600
-    assert aggregate.estimated_model_cost_usd == pytest.approx(5 * 0.000324)
+    assert aggregate.estimated_model_cost_usd == pytest.approx(4 * 0.000656 + 0.000324)
+    assert aggregate.estimated_model_cost_usd == pytest.approx(
+        sum(
+            item.estimated_model_cost_usd
+            for item in [*analysis.diagnostics.batches, web.diagnostics, final.diagnostics]
+        )
+    )
+    assert aggregate.estimated_model_cost_usd != pytest.approx(5 * 0.000324)
+    assert aggregate.estimated_model_cost_usd != pytest.approx(5 * 0.000656)
+    assert web.diagnostics.estimated_model_cost_usd == pytest.approx(0.000324)
+    assert final.diagnostics.estimated_model_cost_usd == pytest.approx(0.000656)
+    assert analysis.diagnostics.model == DEFAULT_OPENAI_MODEL
+    assert web.diagnostics.model == DEFAULT_WEB_DISCOVERY_MODEL
+    assert final.diagnostics.model == DEFAULT_OPENAI_MODEL
+    assert all(call["model"] == DEFAULT_OPENAI_MODEL for call in batches.calls)
+    assert fake_web.responses.calls[0]["model"] == DEFAULT_WEB_DISCOVERY_MODEL
+    assert fake_final.responses.calls[0]["model"] == DEFAULT_OPENAI_MODEL
     for calls, effort in [
         (batches.calls, "low"),
         (fake_web.responses.calls, "low"),
@@ -158,6 +182,9 @@ async def test_batches_and_all_stages_aggregate_with_valid_reasoning(capsys):
     assert fake_web.responses.calls[0]["max_tool_calls"] == 6
     logs = capsys.readouterr().out
     assert "batch=1/3" in logs and "batch=3/3" in logs
+    assert "AI stage=scraped_event_analysis batch=1/3 status=success model=gpt-5.6" in logs
+    assert "AI stage=web_event_discovery status=success model=gpt-6.1-sol" in logs
+    assert "AI stage=final_curation status=success model=gpt-5.6" in logs
     for field in [
         "input_tokens=100",
         "cached_input_tokens=40",
@@ -194,7 +221,7 @@ async def test_absent_telemetry_does_not_fail_any_stage(missing):
     )
     web_service = OpenAIWebDiscoveryService(
         api_key="test",
-        model=DEFAULT_OPENAI_MODEL,
+        model=DEFAULT_WEB_DISCOVERY_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, FakeClient([result])),
@@ -214,23 +241,23 @@ async def test_retries_and_failure_keep_available_billed_usage():
     fake = FakeClient([response(curation(event_id="invented")), response(curation())])
     final = await service(fake).curate(recommendation_context())
     assert final.diagnostics.total_tokens == 300
-    assert final.diagnostics.estimated_model_cost_usd == pytest.approx(0.0014)
+    assert final.diagnostics.estimated_model_cost_usd == pytest.approx(0.0028)
     fake = FakeClient([response(curation(event_id="invented")), RuntimeError("offline")])
     final = await curate_with_fallback(service(fake), recommendation_context())
     assert not final.diagnostics.success
     assert final.diagnostics.total_tokens == 150
-    assert final.diagnostics.estimated_model_cost_usd == pytest.approx(0.0007)
+    assert final.diagnostics.estimated_model_cost_usd == pytest.approx(0.0014)
     request = analysis_request(count=36)
     batches = UsageBatchResponses(request, malformed="missing")
     analysis = await analyze_scraped_events_with_fallback(analysis_service(batches), request)
     assert not analysis.diagnostics.success
-    assert analysis.diagnostics.estimated_model_cost_usd == pytest.approx(3 * 0.000324)
-    assert analysis.diagnostics.batches[1].estimated_model_cost_usd == pytest.approx(2 * 0.000324)
+    assert analysis.diagnostics.estimated_model_cost_usd == pytest.approx(3 * 0.000656)
+    assert analysis.diagnostics.batches[1].estimated_model_cost_usd == pytest.approx(2 * 0.000656)
     _, request2 = web_request()
     result = SimpleNamespace(status="incomplete", error=None, usage=usage())
     web_service = OpenAIWebDiscoveryService(
         api_key="test",
-        model=DEFAULT_OPENAI_MODEL,
+        model=DEFAULT_WEB_DISCOVERY_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, FakeClient([result])),
@@ -253,22 +280,23 @@ def test_pipeline_log_and_audit_aggregate(tmp_path, capsys):
         pipeline, model=DEFAULT_OPENAI_MODEL, reason="Synthetic"
     )
     final = outcome(3, 1)
-    for diagnostic in [
-        intelligence.analysis_outcome.diagnostics,
-        intelligence.web_outcome.diagnostics,
-        final.diagnostics,
+    for diagnostic, model, cost in [
+        (intelligence.analysis_outcome.diagnostics, DEFAULT_OPENAI_MODEL, 0.000656),
+        (intelligence.web_outcome.diagnostics, DEFAULT_WEB_DISCOVERY_MODEL, 0.000324),
+        (final.diagnostics, DEFAULT_OPENAI_MODEL, 0.000656),
     ]:
+        diagnostic.model = model
         diagnostic.input_tokens = 100
         diagnostic.cached_input_tokens = 40
         diagnostic.output_tokens = 20
         diagnostic.total_tokens = 120
-        diagnostic.estimated_model_cost_usd = 0.000324
+        diagnostic.estimated_model_cost_usd = cost
     _print_pipeline_diagnostics(pipeline, intelligence, final)
     logs = capsys.readouterr().out
     assert (
         "aggregate model usage (available telemetry): input_tokens=300 "
         "cached_input_tokens=120 output_tokens=60 total_tokens=360 "
-        "estimated_model_cost_usd=0.0010"
+        "estimated_model_cost_usd=0.0016"
     ) in logs
     audit = write_audit_artifacts(
         pipeline, intelligence, final, output_root=tmp_path, llm_requested=False
@@ -280,5 +308,50 @@ def test_pipeline_log_and_audit_aggregate(tmp_path, capsys):
         "cached_input_tokens": 120,
         "output_tokens": 60,
         "total_tokens": 360,
-        "estimated_model_cost_usd": 0.000972,
+        "estimated_model_cost_usd": 0.001636,
     }
+
+
+@pytest.mark.parametrize(
+    "model,expected", [("gpt-5.6", 0.000656), ("gpt-6.1-sol", 0.000324), ("unpriced-model", None)]
+)
+def test_pricing_selected_by_actual_model(model, expected):
+    config = Settings(_env_file=None)
+    parsed = parse_token_usage(usage(), ModelTokenPricing.from_settings(config, model))
+    assert parsed.estimated_model_cost_usd == (
+        pytest.approx(expected) if expected is not None else None
+    )
+    assert parsed.total_tokens == 120
+
+
+def test_model_and_pricing_overrides(monkeypatch):
+    monkeypatch.setenv("OPENAI_EVENT_ANALYSIS_MODEL", "gpt-6.1-sol")
+    monkeypatch.setenv("OPENAI_WEB_DISCOVERY_MODEL", "gpt-5.6")
+    monkeypatch.setenv("OPENAI_CURATION_MODEL", "custom-model")
+    monkeypatch.setenv(
+        "OPENAI_MODEL_PRICING",
+        '{"custom-model":{"input_usd_per_million":3,"output_usd_per_million":12}}',
+    )
+    config = Settings(_env_file=None)
+    assert config.resolved_event_analysis_model == "gpt-6.1-sol"
+    assert config.resolved_web_discovery_model == "gpt-5.6"
+    assert config.resolved_curation_model == "custom-model"
+    pricing = ModelTokenPricing.from_settings(config, config.resolved_curation_model)
+    assert pricing == ModelTokenPricing(3, None, 12)
+    assert parse_token_usage(usage(), pricing).estimated_model_cost_usd is None
+    assert parse_token_usage(usage(0), pricing).estimated_model_cost_usd == pytest.approx(0.00054)
+    assert ModelTokenPricing.from_settings(config, "gpt-5.6") is None
+
+
+def test_global_fallback_and_explicitly_blank_stage_settings(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "custom-model")
+    for key in [
+        "OPENAI_EVENT_ANALYSIS_MODEL",
+        "OPENAI_WEB_DISCOVERY_MODEL",
+        "OPENAI_CURATION_MODEL",
+    ]:
+        monkeypatch.setenv(key, "")
+    config = Settings(_env_file=None)
+    assert config.resolved_event_analysis_model == "custom-model"
+    assert config.resolved_web_discovery_model == "custom-model"
+    assert config.resolved_curation_model == "custom-model"

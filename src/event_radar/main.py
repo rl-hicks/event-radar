@@ -166,14 +166,18 @@ async def _build_event_intelligence(
             model=settings.resolved_event_analysis_model,
             prompt_path=settings.event_analysis_prompt_path,
             timeout_seconds=settings.openai_timeout_seconds,
-            pricing=ModelTokenPricing.from_settings(settings),
+            pricing=ModelTokenPricing.from_settings(
+                settings, settings.resolved_event_analysis_model
+            ),
         ),
         web_service=OpenAIWebDiscoveryService(
             api_key=key,
             model=settings.resolved_web_discovery_model,
             prompt_path=settings.web_discovery_prompt_path,
             timeout_seconds=settings.openai_timeout_seconds,
-            pricing=ModelTokenPricing.from_settings(settings),
+            pricing=ModelTokenPricing.from_settings(
+                settings, settings.resolved_web_discovery_model
+            ),
         ),
     )
 
@@ -188,7 +192,7 @@ async def _curate_context(context: RecommendationContext) -> CurationOutcome:
         model=settings.resolved_curation_model,
         prompt_path=settings.curation_prompt_path,
         timeout_seconds=settings.openai_timeout_seconds,
-        pricing=ModelTokenPricing.from_settings(settings),
+        pricing=ModelTokenPricing.from_settings(settings, settings.resolved_curation_model),
     )
     return await curate_with_fallback(service, context)
 
