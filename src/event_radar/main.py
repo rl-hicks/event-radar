@@ -7,6 +7,11 @@ from zoneinfo import ZoneInfo
 
 from event_radar.config import settings
 from event_radar.models.curation import CurationDiagnostics, CurationOutcome, RecommendationContext
+from event_radar.models.token_usage import (
+    ModelTokenPricing,
+    aggregate_token_usage,
+    format_token_usage,
+)
 from event_radar.services.audit import write_audit_artifacts
 from event_radar.services.curation_rendering import (
     render_chatgpt_packet,
@@ -161,12 +166,14 @@ async def _build_event_intelligence(
             model=settings.resolved_event_analysis_model,
             prompt_path=settings.event_analysis_prompt_path,
             timeout_seconds=settings.openai_timeout_seconds,
+            pricing=ModelTokenPricing.from_settings(settings),
         ),
         web_service=OpenAIWebDiscoveryService(
             api_key=key,
             model=settings.resolved_web_discovery_model,
             prompt_path=settings.web_discovery_prompt_path,
             timeout_seconds=settings.openai_timeout_seconds,
+            pricing=ModelTokenPricing.from_settings(settings),
         ),
     )
 
@@ -181,6 +188,7 @@ async def _curate_context(context: RecommendationContext) -> CurationOutcome:
         model=settings.resolved_curation_model,
         prompt_path=settings.curation_prompt_path,
         timeout_seconds=settings.openai_timeout_seconds,
+        pricing=ModelTokenPricing.from_settings(settings),
     )
     return await curate_with_fallback(service, context)
 
@@ -256,7 +264,7 @@ def _print_pipeline_diagnostics(
             f"- {item.stage}: {stage_status}, "
             f"model={item.model}, attempts={item.attempts}, result={item.result_count}, "
             f"tokens={item.total_tokens if item.total_tokens is not None else 'n/a'}, "
-            f"latency={latency}"
+            f"latency={latency} {format_token_usage(item)}"
         )
     print(
         f"- final_curation: {'success' if outcome.diagnostics.success else 'fallback'}, "
@@ -265,9 +273,14 @@ def _print_pipeline_diagnostics(
         f"retained_hikes={outcome.diagnostics.retained_hike_count}, "
         f"retained_total={outcome.diagnostics.retained_total_count}, "
         f"tokens={outcome.diagnostics.total_tokens or 'n/a'}, "
-        f"latency={outcome.diagnostics.latency_seconds or 0:.2f}s"
+        f"latency={outcome.diagnostics.latency_seconds or 0:.2f}s "
+        f"{format_token_usage(outcome.diagnostics)}"
     )
     print(f"- aggregate: total_tokens={total_tokens}, total_latency={total_latency:.2f}s")
+    print(
+        "- aggregate model usage (available telemetry): "
+        + format_token_usage(aggregate_token_usage([*stages, outcome.diagnostics]))
+    )
 
 
 async def deliver_weekend_digest(

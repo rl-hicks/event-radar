@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from event_radar.models.event_analysis import WeekendEventCard
+from event_radar.models.token_usage import TokenUsage
 from event_radar.models.user_context import StructuredRuntimeContext
 from event_radar.models.weather import WeatherCondition
 
@@ -194,7 +195,7 @@ class WeekendCuration(BaseModel):
     important_unknowns: list[ImportantUnknown] = Field(max_length=12)
 
 
-class CurationDiagnostics(BaseModel):
+class CurationDiagnostics(TokenUsage):
     model: str
     success: bool
     fallback_reason: str | None = None
@@ -205,9 +206,6 @@ class CurationDiagnostics(BaseModel):
     retained_total_count: int
     attempts: int
     latency_seconds: float | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    total_tokens: int | None = None
 
 
 class CurationOutcome(BaseModel):

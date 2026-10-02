@@ -9,6 +9,7 @@ import pytest
 from openai import AsyncOpenAI, BadRequestError
 from pydantic import ValidationError
 
+from event_radar.config import DEFAULT_OPENAI_MODEL
 from event_radar.models.ai import AIStageDiagnostics
 from event_radar.models.event_analysis import EventEvidenceClaim, SemanticConfidence
 from event_radar.models.web_discovery import (
@@ -335,7 +336,7 @@ async def test_web_search_service_uses_official_tool_and_accepts_zero_results() 
     fake = SimpleNamespace(responses=FakeResponses(response))
     service = OpenAIWebDiscoveryService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, fake),
@@ -377,7 +378,7 @@ async def test_successful_search_preserves_source_evidence() -> None:
     responses = FakeResponses(response)
     service = OpenAIWebDiscoveryService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, SimpleNamespace(responses=responses)),
@@ -405,7 +406,7 @@ async def test_zero_web_search_calls_is_unsuccessful() -> None:
     )
     service = OpenAIWebDiscoveryService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, SimpleNamespace(responses=FakeResponses(response))),
@@ -427,7 +428,7 @@ async def test_malformed_structured_result_fails_safely() -> None:
     )
     service = OpenAIWebDiscoveryService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, SimpleNamespace(responses=FakeResponses(response))),
@@ -465,7 +466,7 @@ async def test_bad_request_exposes_only_sanitized_provider_diagnostics() -> None
 
     service = OpenAIWebDiscoveryService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, SimpleNamespace(responses=Failing())),
@@ -494,7 +495,7 @@ async def test_web_failure_degrades_gracefully_to_no_discoveries() -> None:
 
     service = OpenAIWebDiscoveryService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/web_event_discovery.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, SimpleNamespace(responses=Failing())),

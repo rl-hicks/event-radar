@@ -6,6 +6,15 @@ from openai import APIStatusError, AsyncOpenAI
 
 from event_radar.models.ai import AIStageDiagnostics
 from event_radar.models.event_analysis import EventEvidenceClaim
+from event_radar.models.token_usage import (
+    DEFAULT_MODEL_TOKEN_PRICING,
+    ModelTokenPricing,
+    TokenUsage,
+    aggregate_token_usage,
+    format_token_usage,
+    parse_token_usage,
+    token_usage_fields,
+)
 from event_radar.models.web_discovery import (
     DiscoveredEvent,
     WebDiscoveryOutcome,
@@ -31,11 +40,13 @@ class WebDiscoveryError(RuntimeError):
         *,
         attempts: int = 0,
         latency_seconds: float | None = None,
+        usage: TokenUsage | None = None,
         provider: ProviderErrorDiagnostics | None = None,
     ) -> None:
         super().__init__(message)
         self.attempts = attempts
         self.latency_seconds = latency_seconds
+        self.usage = usage or TokenUsage()
         self.provider = provider or ProviderErrorDiagnostics()
 
 
@@ -48,12 +59,14 @@ class OpenAIWebDiscoveryService:
         prompt_path: Path,
         timeout_seconds: float,
         client: AsyncOpenAI | None = None,
+        pricing: ModelTokenPricing = DEFAULT_MODEL_TOKEN_PRICING,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._prompt_path = prompt_path
         self._timeout_seconds = timeout_seconds
         self._client = client
+        self._pricing = pricing
 
     @property
     def model(self) -> str:
@@ -77,6 +90,7 @@ class OpenAIWebDiscoveryService:
             ) from exc
 
         started = monotonic()
+        usage = TokenUsage()
         correction = ""
         for attempt in range(1, 3):
             try:
@@ -109,13 +123,18 @@ class OpenAIWebDiscoveryService:
                     _provider_failure_message(exc, provider),
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                     provider=provider,
                 ) from exc
+            usage = aggregate_token_usage(
+                [usage, parse_token_usage(getattr(response, "usage", None), self._pricing)]
+            )
             if response.status == "incomplete" or response.error is not None:
                 raise WebDiscoveryError(
                     "OpenAI web discovery response was incomplete or erroneous.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 )
             tool_calls = _web_search_call_count(response.output)
             if tool_calls == 0:
@@ -123,6 +142,7 @@ class OpenAIWebDiscoveryService:
                     "OpenAI web discovery completed without a web_search_call.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 )
             result = response.output_parsed
             if not isinstance(result, WebDiscoveryResult):
@@ -130,6 +150,7 @@ class OpenAIWebDiscoveryService:
                     "OpenAI web discovery returned no valid structured result.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 )
             try:
                 _validate_discoveries(request, result.discoveries)
@@ -147,6 +168,7 @@ class OpenAIWebDiscoveryService:
                     "Web discovery remained invalid after one corrective retry.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 ) from exc
 
             valid, duplicates = remove_exact_web_duplicates(
@@ -154,7 +176,6 @@ class OpenAIWebDiscoveryService:
                 [],
                 timezone=request.user_context.base_location.timezone,
             )
-            usage = response.usage
             diagnostics = AIStageDiagnostics(
                 stage="web_event_discovery",
                 model=self._model,
@@ -163,9 +184,7 @@ class OpenAIWebDiscoveryService:
                 result_count=len(valid),
                 attempts=attempt,
                 latency_seconds=monotonic() - started,
-                input_tokens=usage.input_tokens if usage else None,
-                output_tokens=usage.output_tokens if usage else None,
-                total_tokens=usage.total_tokens if usage else None,
+                **token_usage_fields(usage),
                 tool_calls=tool_calls,
             )
             _log(diagnostics)
@@ -194,6 +213,7 @@ async def discover_events_with_fallback(
             result_count=0,
             attempts=exc.attempts,
             latency_seconds=exc.latency_seconds,
+            **token_usage_fields(exc.usage),
             tool_calls=0,
             provider_status_code=exc.provider.status_code,
             provider_error_type=exc.provider.error_type,
@@ -343,6 +363,7 @@ def _log(diagnostics: AIStageDiagnostics) -> None:
         f"model={diagnostics.model} result={diagnostics.result_count} "
         f"searches={diagnostics.tool_calls or 0} attempts={diagnostics.attempts} "
         f"latency={latency} "
-        f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'}"
+        f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'} "
+        f"{format_token_usage(diagnostics)}"
         f"{provider}"
     )

@@ -12,6 +12,7 @@ from event_radar.models.curation import CurationOutcome
 from event_radar.models.event import Event
 from event_radar.models.event_analysis import EventDisposition
 from event_radar.models.recommendation import EventEvaluation
+from event_radar.models.token_usage import aggregate_token_usage
 from event_radar.recommendation_config import DEFAULT_RECOMMENDATION_CONFIG
 from event_radar.services.curation_rendering import format_event_time_range, render_chatgpt_packet
 from event_radar.services.pipeline import EventIntelligenceResult, RecommendationPipelineResult
@@ -167,6 +168,9 @@ def write_audit_artifacts(
             ),
             "diagnostics": outcome.diagnostics.model_dump(mode="json"),
         },
+        "aggregate_ai_usage": aggregate_token_usage([*diagnostics, outcome.diagnostics]).model_dump(
+            mode="json"
+        ),
         "aggregate_ai_tokens": sum(item.total_tokens or 0 for item in diagnostics)
         + (outcome.diagnostics.total_tokens or 0),
         "aggregate_ai_latency_seconds": sum(item.latency_seconds or 0 for item in diagnostics)

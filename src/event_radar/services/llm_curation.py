@@ -3,6 +3,7 @@ from time import monotonic
 
 from openai import AsyncOpenAI
 
+from event_radar.config import DEFAULT_OPENAI_MODEL
 from event_radar.curation_config import DEFAULT_CURATION_CONFIG, CurationConfig
 from event_radar.models.curation import (
     CandidateType,
@@ -10,6 +11,15 @@ from event_radar.models.curation import (
     CurationOutcome,
     RecommendationContext,
     WeekendCuration,
+)
+from event_radar.models.token_usage import (
+    DEFAULT_MODEL_TOKEN_PRICING,
+    ModelTokenPricing,
+    TokenUsage,
+    aggregate_token_usage,
+    format_token_usage,
+    parse_token_usage,
+    token_usage_fields,
 )
 
 
@@ -20,10 +30,12 @@ class CurationError(RuntimeError):
         *,
         attempts: int = 0,
         latency_seconds: float | None = None,
+        usage: TokenUsage | None = None,
     ) -> None:
         super().__init__(message)
         self.attempts = attempts
         self.latency_seconds = latency_seconds
+        self.usage = usage or TokenUsage()
 
 
 class CurationReferenceError(CurationError):
@@ -35,10 +47,11 @@ class OpenAICurationService:
         self,
         *,
         api_key: str | None,
-        model: str = "gpt-5.6",
+        model: str = DEFAULT_OPENAI_MODEL,
         prompt_path: Path = Path("prompts/weekend_curation.md"),
         timeout_seconds: float = 20.0,
         client: AsyncOpenAI | None = None,
+        pricing: ModelTokenPricing = DEFAULT_MODEL_TOKEN_PRICING,
         config: CurationConfig = DEFAULT_CURATION_CONFIG,
     ) -> None:
         self._api_key = api_key
@@ -46,6 +59,7 @@ class OpenAICurationService:
         self._prompt_path = prompt_path
         self._timeout_seconds = timeout_seconds
         self._client = client
+        self._pricing = pricing
         self._config = config
 
     @property
@@ -69,6 +83,7 @@ class OpenAICurationService:
 
         input_text = context.model_dump_json(exclude_none=False)
         started = monotonic()
+        usage = TokenUsage()
         correction = ""
         for attempt in range(1, 3):
             try:
@@ -85,12 +100,17 @@ class OpenAICurationService:
                     f"OpenAI final-curation request failed ({type(exc).__name__}).",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 ) from exc
+            usage = aggregate_token_usage(
+                [usage, parse_token_usage(getattr(response, "usage", None), self._pricing)]
+            )
             if response.status == "incomplete" or response.error is not None:
                 raise CurationError(
                     "OpenAI final-curation response was incomplete or erroneous.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 )
             curation = response.output_parsed
             if curation is None:
@@ -98,6 +118,7 @@ class OpenAICurationService:
                     "OpenAI final curation returned no structured result.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 )
             try:
                 validate_curation_references(
@@ -120,9 +141,9 @@ class OpenAICurationService:
                     "Final curation remained invalid after one corrective retry.",
                     attempts=attempt,
                     latency_seconds=monotonic() - started,
+                    usage=usage,
                 ) from exc
 
-            usage = response.usage
             diagnostics = CurationDiagnostics(
                 model=self._model,
                 success=True,
@@ -133,9 +154,7 @@ class OpenAICurationService:
                 retained_total_count=len(curation.event_options) + len(curation.hike_options),
                 attempts=attempt,
                 latency_seconds=monotonic() - started,
-                input_tokens=usage.input_tokens if usage else None,
-                output_tokens=usage.output_tokens if usage else None,
-                total_tokens=usage.total_tokens if usage else None,
+                **token_usage_fields(usage),
             )
             _log_diagnostics(diagnostics)
             return CurationOutcome(curation=curation, diagnostics=diagnostics)
@@ -160,6 +179,7 @@ async def curate_with_fallback(
             retained_total_count=0,
             attempts=exc.attempts,
             latency_seconds=exc.latency_seconds,
+            **token_usage_fields(exc.usage),
         )
         _log_diagnostics(diagnostics)
         return CurationOutcome(curation=None, diagnostics=diagnostics)
@@ -228,5 +248,6 @@ def _log_diagnostics(diagnostics: CurationDiagnostics) -> None:
         f"retained_hikes={diagnostics.retained_hike_count} "
         f"retained_total={diagnostics.retained_total_count} "
         f"attempts={diagnostics.attempts} latency={latency} "
-        f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'}"
+        f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'} "
+        f"{format_token_usage(diagnostics)}"
     )

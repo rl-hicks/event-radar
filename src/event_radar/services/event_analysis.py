@@ -13,6 +13,15 @@ from event_radar.models.event_analysis import (
     ScrapedEventAnalysisOutcome,
     ScrapedEventAnalysisRequest,
 )
+from event_radar.models.token_usage import (
+    DEFAULT_MODEL_TOKEN_PRICING,
+    ModelTokenPricing,
+    TokenUsage,
+    aggregate_token_usage,
+    format_token_usage,
+    parse_token_usage,
+    token_usage_fields,
+)
 from event_radar.services.event_cards import EventAnalysisReferenceError, validate_scraped_analysis
 
 SCRAPED_EVENT_ANALYSIS_BATCH_SIZE = 35
@@ -28,6 +37,8 @@ class EventAnalysisError(RuntimeError):
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_input_tokens: int | None = None,
+        estimated_model_cost_usd: float | None = None,
         provider_error_type: str | None = None,
         provider_error_code: str | None = None,
         provider_status_code: int | None = None,
@@ -39,6 +50,8 @@ class EventAnalysisError(RuntimeError):
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.total_tokens = total_tokens
+        self.cached_input_tokens = cached_input_tokens
+        self.estimated_model_cost_usd = estimated_model_cost_usd
         self.provider_error_type = provider_error_type
         self.provider_error_code = provider_error_code
         self.provider_status_code = provider_status_code
@@ -84,12 +97,14 @@ class OpenAIEventAnalysisService:
         prompt_path: Path,
         timeout_seconds: float,
         client: AsyncOpenAI | None = None,
+        pricing: ModelTokenPricing = DEFAULT_MODEL_TOKEN_PRICING,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._prompt_path = prompt_path
         self._timeout_seconds = timeout_seconds
         self._client = client
+        self._pricing = pricing
 
     @property
     def model(self) -> str:
@@ -111,9 +126,7 @@ class OpenAIEventAnalysisService:
             raise EventAnalysisError("Could not read event-analysis prompt.") from exc
 
         started = monotonic()
-        input_tokens: int | None = None
-        output_tokens: int | None = None
-        total_tokens: int | None = None
+        usage = TokenUsage()
 
         def failure(message: str, attempt: int, exc: Exception | None = None) -> EventAnalysisError:
             error_type, code, status, safe_message = (
@@ -125,9 +138,7 @@ class OpenAIEventAnalysisService:
                 message,
                 attempts=attempt,
                 latency_seconds=monotonic() - started,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
+                **token_usage_fields(usage),
                 provider_error_type=error_type,
                 provider_error_code=code,
                 provider_status_code=status,
@@ -147,11 +158,9 @@ class OpenAIEventAnalysisService:
                 )
             except Exception as exc:
                 raise failure(type(exc).__name__, attempt, exc) from exc
-            usage = response.usage
-            if usage:
-                input_tokens = (input_tokens or 0) + usage.input_tokens
-                output_tokens = (output_tokens or 0) + usage.output_tokens
-                total_tokens = (total_tokens or 0) + usage.total_tokens
+            usage = aggregate_token_usage(
+                [usage, parse_token_usage(getattr(response, "usage", None), self._pricing)]
+            )
             if response.status == "incomplete" or response.error is not None:
                 error = failure(
                     "ProviderResponseError" if response.error is not None else "IncompleteResponse",
@@ -191,9 +200,7 @@ class OpenAIEventAnalysisService:
                 result_count=len(analysis.events),
                 attempts=attempt,
                 latency_seconds=monotonic() - started,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
+                **token_usage_fields(usage),
             )
             return ScrapedEventAnalysisOutcome(analysis=analysis, diagnostics=diagnostics)
         raise EventAnalysisError("Scraped-event analysis produced no valid result.")
@@ -285,11 +292,6 @@ async def analyze_scraped_events_with_fallback(
         else "fallback"
     )
 
-    def token_sum(field: str) -> int | None:
-        values = [getattr(batch, field) for batch in batches]
-        known = [value for value in values if value is not None]
-        return sum(known) if known else None
-
     diagnostics = ScrapedAnalysisDiagnostics(
         stage="scraped_event_analysis",
         model=service.model,
@@ -306,9 +308,7 @@ async def analyze_scraped_events_with_fallback(
         ),
         attempts=sum(batch.attempts for batch in batches),
         latency_seconds=sum(batch.latency_seconds or 0 for batch in batches),
-        input_tokens=token_sum("input_tokens"),
-        output_tokens=token_sum("output_tokens"),
-        total_tokens=token_sum("total_tokens"),
+        **token_usage_fields(aggregate_token_usage(batches)),
         batch_size=batch_size,
         batch_count=len(batches),
         successful_batch_count=successful,
@@ -357,7 +357,6 @@ def _log(diagnostics: AIStageDiagnostics, *, batch: str | None = None) -> None:
         + f"status={status} model={diagnostics.model} input={diagnostics.input_count} "
         f"result={diagnostics.result_count} attempts={diagnostics.attempts} "
         f"latency={latency} "
-        f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'}"
-        + summary
-        + error
+        f"tokens={diagnostics.total_tokens if diagnostics.total_tokens is not None else 'n/a'} "
+        f"{format_token_usage(diagnostics)}" + summary + error
     )

@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 from openai import AsyncOpenAI
 
+from event_radar.config import DEFAULT_OPENAI_MODEL
 from event_radar.models.event_analysis import (
     EventDisposition,
     ExperienceGroupProposal,
@@ -188,7 +189,7 @@ async def test_analysis_service_validates_structured_output_and_logs_usage() -> 
     fake = FakeClient(response)
     service = OpenAIEventAnalysisService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/event_analysis.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, fake),
@@ -211,7 +212,7 @@ async def test_analysis_provider_failure_degrades_without_legacy_ranking() -> No
 
     service = OpenAIEventAnalysisService(
         api_key="test",
-        model="gpt-5.6",
+        model=DEFAULT_OPENAI_MODEL,
         prompt_path=Path("prompts/event_analysis.md"),
         timeout_seconds=120,
         client=cast(AsyncOpenAI, SimpleNamespace(responses=FailingResponses())),

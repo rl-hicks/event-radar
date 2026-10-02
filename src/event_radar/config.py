@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"
+
 
 class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
@@ -20,7 +22,10 @@ class Settings(BaseSettings):
         "config/personal_experience_preference_context.md"
     )
     openai_api_key: SecretStr | None = None
-    openai_model: str = "gpt-5.6"
+    openai_model: str = DEFAULT_OPENAI_MODEL
+    openai_input_usd_per_million: float = Field(default=2.00, ge=0)
+    openai_cached_input_usd_per_million: float = Field(default=0.10, ge=0)
+    openai_output_usd_per_million: float = Field(default=10.00, ge=0)
     openai_event_analysis_model: str | None = None
     openai_web_discovery_model: str | None = None
     openai_curation_model: str | None = None

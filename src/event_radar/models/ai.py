@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from event_radar.models.token_usage import TokenUsage
 
 
-class AIStageDiagnostics(BaseModel):
+class AIStageDiagnostics(TokenUsage):
     stage: str
     model: str
     success: bool
@@ -10,9 +10,6 @@ class AIStageDiagnostics(BaseModel):
     result_count: int
     attempts: int
     latency_seconds: float | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    total_tokens: int | None = None
     tool_calls: int | None = None
     provider_status_code: int | None = None
     provider_error_type: str | None = None
