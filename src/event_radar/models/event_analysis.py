@@ -118,9 +118,33 @@ class ScrapedEventAnalysis(BaseModel):
     experience_groups: list[ExperienceGroupProposal]
 
 
+class ScrapedAnalysisBatchDiagnostics(AIStageDiagnostics):
+    batch_index: int
+
+
+class ScrapedAnalysisDiagnostics(AIStageDiagnostics):
+    status: Literal["success", "partial", "fallback", "skipped"]
+    batch_size: int
+    batch_count: int
+    successful_batch_count: int
+    failed_batch_count: int
+    fallback_event_count: int
+    batches: list[ScrapedAnalysisBatchDiagnostics]
+
+
 class ScrapedEventAnalysisOutcome(BaseModel):
     analysis: ScrapedEventAnalysis | None
-    diagnostics: AIStageDiagnostics
+    diagnostics: ScrapedAnalysisDiagnostics | AIStageDiagnostics
+    fallback_event_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def status(self) -> Literal["success", "partial", "fallback", "skipped"]:
+        """Prefer the explicit batched status; support older/non-AI outcomes."""
+        if isinstance(self.diagnostics, ScrapedAnalysisDiagnostics):
+            return self.diagnostics.status
+        if self.diagnostics.success:
+            return "success"
+        return "skipped" if self.diagnostics.input_count == 0 else "fallback"
 
 
 class WeekendEventCard(BaseModel):

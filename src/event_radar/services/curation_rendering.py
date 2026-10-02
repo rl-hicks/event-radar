@@ -127,6 +127,10 @@ def render_telegram_curation_summary(
 ) -> str:
     timezone = ZoneInfo(context.user_context.base_location.timezone)
     lines = ["EVENT RADAR - THIS WEEKEND", ""]
+    if context.event_pipeline_notes:
+        lines.extend(
+            ["Event research status", *(f"- {note}" for note in context.event_pipeline_notes), ""]
+        )
     if outcome.curation is None:
         lines.extend(
             [

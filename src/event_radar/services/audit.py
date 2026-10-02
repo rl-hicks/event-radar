@@ -124,9 +124,16 @@ def write_audit_artifacts(
             "requested": llm_requested,
             "ran": intelligence.analysis_outcome.diagnostics.attempts > 0,
             "success": intelligence.analysis_outcome.diagnostics.success,
+            "status": intelligence.analysis_outcome.status,
             "dispositions": dispositions,
             "experience_group_count": groups,
             "scraped_card_count": len(intelligence.scraped_event_cards),
+            "semantic_card_count": sum(
+                card.semantic_analysis_available for card in intelligence.scraped_event_cards
+            ),
+            "fallback_factual_card_count": sum(
+                not card.semantic_analysis_available for card in intelligence.scraped_event_cards
+            ),
             "diagnostics": intelligence.analysis_outcome.diagnostics.model_dump(mode="json"),
         },
         "web_discovery": {

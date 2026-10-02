@@ -294,27 +294,10 @@ async def build_event_intelligence(
             PersonalContextStage.WEB_EVENT_DISCOVERY
         ),
     )
-    if request.events:
-        analysis_outcome, web_outcome = await asyncio.gather(
-            analyze_scraped_events_with_fallback(analysis_service, request),
-            discover_events_with_fallback(web_service, web_request),
-        )
-    else:
-        analysis_outcome = ScrapedEventAnalysisOutcome(
-            analysis=None,
-            diagnostics=AIStageDiagnostics(
-                stage="scraped_event_analysis",
-                model=analysis_service.model,
-                success=False,
-                fallback_reason=(
-                    "No fixed-feed events were available; AI #1 was intentionally skipped."
-                ),
-                input_count=0,
-                result_count=0,
-                attempts=0,
-            ),
-        )
-        web_outcome = await discover_events_with_fallback(web_service, web_request)
+    analysis_outcome, web_outcome = await asyncio.gather(
+        analyze_scraped_events_with_fallback(analysis_service, request),
+        discover_events_with_fallback(web_service, web_request),
+    )
     web_discoveries, duplicate_count = remove_exact_web_duplicates(
         web_outcome.valid_discoveries,
         request.events,
@@ -330,7 +313,11 @@ async def build_event_intelligence(
                 ),
             }
         )
-    scraped_cards = build_scraped_event_cards(request, analysis_outcome.analysis)
+    scraped_cards = build_scraped_event_cards(
+        request,
+        analysis_outcome.analysis,
+        fallback_event_ids=analysis_outcome.fallback_event_ids,
+    )
     web_cards = build_web_event_cards(web_outcome.valid_discoveries)
     scraped_card_ids = {card.candidate_id for card in scraped_cards}
     unique_web_cards = [card for card in web_cards if card.candidate_id not in scraped_card_ids]
@@ -424,17 +411,20 @@ def _intelligence_result(
 ) -> EventIntelligenceResult:
     combined = [*scraped_cards, *web_cards]
     notes = _provider_research_notes(pipeline)
-    if not analysis_outcome.diagnostics.success:
-        if request.events:
-            notes.append(
-                "Scraped-event semantic analysis was unavailable; broad factual scraped cards "
-                "were preserved without pretending analysis succeeded."
-            )
-        else:
-            notes.append(
-                "AI #1 scraped-event analysis was skipped because no fixed-feed events "
-                "were available."
-            )
+    if analysis_outcome.status == "partial":
+        notes.append(
+            "Scraped-event semantic analysis partially degraded; successful batches were preserved "
+            "and some scraped events use broad factual fallback cards."
+        )
+    elif analysis_outcome.status == "fallback":
+        notes.append(
+            "Scraped-event semantic analysis was unavailable; broad factual scraped cards "
+            "were preserved without pretending analysis succeeded."
+        )
+    elif analysis_outcome.status == "skipped":
+        notes.append(
+            "AI #1 scraped-event analysis was skipped because no fixed-feed events were available."
+        )
     if not web_outcome.diagnostics.success:
         notes.append("Web discovery was unavailable; no web-discovered event cards were added.")
     context = build_recommendation_context(

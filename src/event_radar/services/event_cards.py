@@ -144,15 +144,25 @@ def validate_scraped_analysis(
 def build_scraped_event_cards(
     request: ScrapedEventAnalysisRequest,
     analysis: ScrapedEventAnalysis | None,
+    *,
+    fallback_event_ids: list[str] | None = None,
 ) -> list[WeekendEventCard]:
     facts = {event.event_id: event for event in request.events}
     if analysis is None:
         return [_factual_fallback_card(event) for event in request.events]
 
-    validate_scraped_analysis(request, analysis)
+    fallback_ids = set(fallback_event_ids or [])
+    if len(fallback_ids) != len(fallback_event_ids or []) or not fallback_ids <= facts.keys():
+        raise EventAnalysisReferenceError("Invalid fallback event IDs.")
+    semantic_request = request.model_copy(
+        update={"events": [event for event in request.events if event.event_id not in fallback_ids]}
+    )
+    validate_scraped_analysis(semantic_request, analysis)
     judgments = {judgment.event_id: judgment for judgment in analysis.events}
     grouped_ids: set[str] = set()
-    cards: list[WeekendEventCard] = []
+    cards: list[WeekendEventCard] = [
+        _factual_fallback_card(event) for event in request.events if event.event_id in fallback_ids
+    ]
 
     for group in analysis.experience_groups:
         group_judgments = [judgments[event_id] for event_id in group.occurrence_ids]

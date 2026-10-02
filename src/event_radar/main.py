@@ -246,10 +246,14 @@ def _print_pipeline_diagnostics(
     total_tokens = stage_tokens + (outcome.diagnostics.total_tokens or 0)
     total_latency = stage_latency + (outcome.diagnostics.latency_seconds or 0)
     print("AI stages:")
-    for item in stages:
+    statuses = [
+        intelligence.analysis_outcome.status,
+        "success" if intelligence.web_outcome.diagnostics.success else "fallback",
+    ]
+    for item, stage_status in zip(stages, statuses, strict=True):
         latency = f"{item.latency_seconds:.2f}s" if item.latency_seconds is not None else "n/a"
         print(
-            f"- {item.stage}: {'success' if item.success else 'fallback'}, "
+            f"- {item.stage}: {stage_status}, "
             f"model={item.model}, attempts={item.attempts}, result={item.result_count}, "
             f"tokens={item.total_tokens if item.total_tokens is not None else 'n/a'}, "
             f"latency={latency}"
