@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: event_radar
+      POSTGRES_USER: event_radar
+      POSTGRES_PASSWORD: event_radar
+    ports:
+      - "5432:5432"
+    volumes:
+      - event_radar_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U event_radar -d event_radar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  event_radar_postgres:
