@@ -1,52 +1,18 @@
 """Opt-in real PostgreSQL proof, restricted to the disposable test service."""
 
-import os
-from collections.abc import Iterator
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import DateTime, Engine, inspect, text
+from sqlalchemy import DateTime, Engine, inspect
 from sqlalchemy.dialects.postgresql import UUID
 
 from alembic import command
 from event_radar.db.health import check_database
 from event_radar.db.models import AppUser, Base
-from event_radar.db.session import build_engine, build_session_factory, session_scope
-from tests.database_safety import isolated_test_url
-
-
-@pytest.fixture
-def database(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine, Config]]:
-    value = os.environ.get("TEST_DATABASE_URL")
-    if not value:
-        pytest.skip("Set TEST_DATABASE_URL to opt into disposable PostgreSQL integration tests")
-    url = isolated_test_url(value)
-    # libpq variables such as PGHOSTADDR/PGSERVICE must not redirect this target.
-    for name in tuple(os.environ):
-        if name.startswith("PG"):
-            monkeypatch.delenv(name)
-    # Never use inherited DATABASE_URL (which could be a development or remote DB).
-    monkeypatch.setenv("DATABASE_URL", url.render_as_string(hide_password=False))
-    engine = build_engine(url)
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    try:
-        with engine.connect() as connection:
-            identity = connection.execute(text("SELECT current_database(), current_user")).one()
-            assert tuple(identity) == ("event_radar_test", "event_radar_test")
-            assert set(inspect(connection).get_table_names()) <= {"app_users", "alembic_version"}
-        # The URL and live identity guards precede every destructive test migration.
-        command.downgrade(config, "base")
-        assert set(inspect(engine).get_table_names()) <= {"alembic_version"}
-        try:
-            yield engine, config
-        finally:
-            command.downgrade(config, "base")
-    finally:
-        engine.dispose()
+from event_radar.db.session import build_session_factory, session_scope
 
 
 def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> None:

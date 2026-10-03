@@ -17,7 +17,7 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
 
         blocked = (
             "event_radar.config", "event_radar.main", "event_radar.services",
-            "event_radar.collectors", "openai", "psycopg",
+            "event_radar.collectors", "openai", "psycopg", "alembic",
         )
 
         class NoLegacyImports(importlib.abc.MetaPathFinder):
@@ -53,11 +53,12 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
 
         assert set(Base.metadata.tables) == {"app_users"}
         app = create_app()
-        assert not app.routes
+        assert app.state.database._engine is None
         with TestClient(app) as client:
+            assert app.state.database._engine is None
             assert client.get("/").status_code == 404
-            assert client.get("/health").status_code == 404
-            assert client.get("/api/me").status_code == 404
+            assert client.get("/health").status_code == 503
+            assert client.get("/api/me").status_code == 401
         assert not any(name in sys.modules for name in blocked)
         print("Isolated imports and ASGI startup/shutdown passed")
         """

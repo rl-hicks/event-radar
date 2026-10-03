@@ -1,9 +1,10 @@
 # Local development foundation
 
 The personal research CLI, product API, and browser shell coexist in this repository.
-WP2 adds migration-managed identity persistence only. No product routes (including
-`/health`), authentication, or frontend data requests exist yet. The API does not
-import the personal runtime configuration or require private files or a database.
+WP3 adds service health and an identity-foundation API on migration-managed
+persistence. Real authentication and frontend API requests are not implemented.
+The API does not import personal runtime configuration or require private files.
+Startup does not require a configured/reachable database.
 
 Use a separate development worktree. Do not copy production `.env`, personal
 context, Telegram state, or credentials into it. Commands below run from the
@@ -16,11 +17,12 @@ Use uv with Python 3.13 (`.python-version`):
 ```bash
 uv sync --frozen
 uv run event-radar --help
-uv run uvicorn event_radar.api.app:create_app --factory --host 127.0.0.1 --port 8000
+uv run uvicorn event_radar.api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-The API starts an empty ASGI application; requests currently return 404. Stop it
-with Ctrl-C. No health route is needed to prove startup.
+The API starts without connecting to PostgreSQL. Stop it with Ctrl-C.
+`GET /health` returns 200 when the configured DB responds, otherwise 503.
+`GET /api/me` returns 401 until WP4 supplies real authentication.
 
 The existing `uv run event-radar` command remains the personal production runner.
 It requires private context/state and credentials, performs research, polls Telegram,
@@ -150,7 +152,7 @@ sudo docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 po
 sudo docker compose -f docker-compose.test.yml ps
 sudo docker compose -f docker-compose.test.yml exec -T postgres_test pg_isready -U event_radar_test -d event_radar_test
 export TEST_DATABASE_URL='postgresql+psycopg://event_radar_test:event_radar_test_local@127.0.0.1:55432/event_radar_test'
-uv run pytest tests/test_database_integration.py -v
+uv run pytest
 sudo docker compose -f docker-compose.test.yml down
 unset TEST_DATABASE_URL
 ```
@@ -162,9 +164,55 @@ persistent `event-radar-dev_postgres_data` volume untouched.
 The integration suite verifies base-to-head, head-to-base-to-head, reflected schema,
 model/migration drift, connectivity, identity insert/read, distinct UUIDs, transaction
 rollback, and returned connections. Cleanup downgrades the test schema to base.
-Without `TEST_DATABASE_URL`, these two tests explicitly skip; skips are not PostgreSQL
+Without `TEST_DATABASE_URL`, the PostgreSQL tests explicitly skip; skips are not PostgreSQL
 verification evidence. With it set, connection or safety failures fail the tests.
 
 For a development database, `DATABASE_URL` plus `uv run alembic current` reports the
 applied revision. Do not run `downgrade base` on valuable data: it drops `app_users`.
 Avoid `docker compose down -v`, volume pruning, and manual schema creation.
+
+## WP3 API contracts and authentication boundary
+
+`GET /health` is unauthenticated. With a working `DATABASE_URL` it returns
+`{"status":"ok","database":"ok"}`. Missing/invalid configuration or failed
+connectivity produces 503 with unavailable status and a sanitized error envelope.
+It checks `SELECT 1`; it does not validate migration currency, create schema, or
+run migrations. WP2 engine timeout settings bound connection/pool/statement waits.
+
+`GET /api/me` obtains identity exclusively from `get_current_user()`. This dependency
+always returns 401 with `WWW-Authenticate: Bearer` in WP3, even for supplied bearer
+tokens. No token is parsed or trusted. Supabase JWT verification belongs to WP4.
+Only tests override the dependency with synthetic `AuthenticatedUser` objects;
+there is no runtime bypass flag, test token, or identity header.
+
+When tests provide an identity, the route gets or creates its UUID `app_users` row
+and returns `id`, identity-provided `email`, `created_at`, and `database_roundtrip`.
+Email is never persisted. Query/body/header user IDs have no effect. PostgreSQL
+`ON CONFLICT DO NOTHING` handles competing inserts; subsequent lookup uses the
+normal READ COMMITTED isolation level. Function-scoped DB dependency teardown
+commits before sending success, rolls back failures, and closes the session.
+Engines are created lazily per application and disposed at shutdown.
+
+`WEB_ORIGINS` is a backend-only comma-separated list of exact HTTP(S) origins,
+with no paths, credentials, or wildcards. Default: `http://localhost:5173`.
+An empty value allows no cross-origin access. If browsing Vite at 127.0.0.1,
+explicitly include `http://127.0.0.1:5173`. Only GET and the Authorization request
+header are enabled; cookie credentials are disabled. CORS is not authentication.
+
+API errors use `{"error":{"code":"...","message":"..."}}`. Health failure also
+includes `status` and `database`. Validation responses do not echo request input.
+Raw database/provider errors and tracebacks are never returned. CORS preflight
+rejections are handled by the standard CORS middleware.
+
+The `event_radar.api` logger emits JSON request records containing method, matched
+route template (or `<unmatched>`), status, duration_ms, and error_code. It omits
+query strings, raw unmatched paths, bodies, authorization headers, tokens, user
+context, database URLs, exception text, and traceback locals. Use the documented
+`--no-access-log` Uvicorn flag to avoid its separate raw URL access logs. CORS
+preflight requests are handled before route request logging.
+
+The API/PostgreSQL integration tests use the guarded disposable fixture from WP2
+and synthetic auth to prove A/B persistence, repeat identity, manipulation resistance,
+health, and concurrent identity creation. Run the complete suite with
+`TEST_DATABASE_URL` exported using the owner workflow above; skipped integration
+tests are not live PostgreSQL proof. No browser auth or product UX is included.
