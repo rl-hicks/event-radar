@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import jwt
@@ -101,11 +101,10 @@ def _configured_verifier() -> SupabaseTokenVerifier:
 
 
 _bearer = HTTPBearer(auto_error=False)
+BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)]
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> AuthenticatedUser:
+def get_current_user(credentials: BearerCredentials) -> AuthenticatedUser:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
