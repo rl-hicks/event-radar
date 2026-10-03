@@ -371,3 +371,6 @@ hosting configuration and deployment, not WP5.
 No deployment is part of WP4 or WP5. WP6 must still prove the deployed chain:
 web -> Supabase Auth -> FastAPI -> PostgreSQL, including deployed origins/configuration,
 A/B isolation, refresh, and local-session sign-out. No E0 deployment claim is made here.
+
+WP6 staging configuration and owner deployment steps: [deployment.md](deployment.md).
+Repository configuration alone does not establish deployed verification.
