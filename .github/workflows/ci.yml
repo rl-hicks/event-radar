@@ -11,43 +11,24 @@ permissions:
   contents: read
 
 jobs:
-  lockfiles:
-    if: github.ref == 'refs/heads/codex/e0-productization-foundation' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-      - name: Refresh lockfiles
-        run: |
-          uv lock
-          cd web
-          npm install --package-lock-only
-      - name: Commit lockfiles
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- uv.lock web/package-lock.json; then
-            echo "Lockfiles already current."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add uv.lock web/package-lock.json
-          git commit -m "Lock E0 backend and web dependencies"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: event_radar_ci
+          POSTGRES_USER: event_radar
+          POSTGRES_PASSWORD: event_radar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U event_radar -d event_radar_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      DATABASE_URL: sqlite+pysqlite:///./event-radar-ci.db
+      DATABASE_URL: postgresql+psycopg://event_radar:event_radar@localhost:5432/event_radar_ci
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,8 +36,8 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
-      - name: Install dependencies
-        run: uv sync
+      - name: Install locked dependencies
+        run: uv sync --frozen
       - name: Format check
         run: uv run ruff format --check .
       - name: Lint
@@ -65,8 +46,18 @@ jobs:
         run: uv run mypy src
       - name: Test
         run: uv run pytest
-      - name: Migration smoke
+      - name: Apply migrations to PostgreSQL
         run: uv run alembic upgrade head
+      - name: Verify API database health
+        run: |
+          uv run python - <<'PY'
+          from fastapi.testclient import TestClient
+          from event_radar.api.app import app
+
+          response = TestClient(app).get("/health")
+          assert response.status_code == 200, response.text
+          assert response.json() == {"status": "ok", "database": "ok"}
+          PY
       - name: Whitespace check
         run: git diff --check
 
@@ -82,8 +73,10 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - name: Install dependencies
-        run: npm install
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
       - name: Lint
         run: npm run lint
       - name: Type check
