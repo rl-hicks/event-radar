@@ -1,0 +1,38 @@
+name: Event Radar CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex/e0-productization-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite+pysqlite:///./event-radar-ci.db
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Lint
+        run: uv run ruff check .
+      - name: Type check
+        run: uv run mypy src
+      - name: Test
+        run: uv run pytest
+      - name: Migration smoke
+        run: uv run alembic upgrade head
+      - name: Whitespace check
+        run: git diff --check
