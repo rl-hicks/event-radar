@@ -10,6 +10,8 @@ __pycache__/
 
 # Environment secrets
 .env
+.env.*
+!.env.example
 config/user_context.json
 config/personal_experience_preference_context.md
 
@@ -20,6 +22,14 @@ state/*.json
 # Generated decision packets and local pipeline audits
 output/
 audit/
+
+# Web local/build state
+web/node_modules/
+web/dist/
+web/.env
+web/.env.*
+!web/.env.example
+web/*.tsbuildinfo
 
 # Editors
 .vscode/
