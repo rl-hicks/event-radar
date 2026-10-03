@@ -34,6 +34,8 @@ jobs:
           enable-cache: true
       - name: Install locked Python dependencies
         run: uv sync --frozen
+      - name: Tracked-source security baseline
+        run: uv run python scripts/check_security.py
       - name: Format
         run: uv run ruff format --check .
       - name: Lint
@@ -123,3 +125,5 @@ jobs:
         run: npm test -- --run
       - name: Production build only
         run: npm run build
+      - name: Built frontend security baseline
+        run: python3 ../scripts/check_security.py --dist dist

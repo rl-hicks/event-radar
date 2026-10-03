@@ -42,3 +42,6 @@ web/dist/
 web/coverage/
 .env.*
 !.env.example
+
+# Provider-generated local project metadata (all worktrees/clones).
+.vercel/
