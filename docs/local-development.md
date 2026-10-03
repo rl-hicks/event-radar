@@ -1,8 +1,8 @@
 # Local development foundation
 
 The personal research CLI, product API, and browser shell coexist in this repository.
-WP4 adds Supabase user-token validation and a development browser auth check
-on migration-managed identity persistence. This is not Product V1.
+WP5 provides public and protected browser routes over the accepted WP4 Supabase
+authentication and migration-managed identity persistence. This is not Product V1.
 The API does not import personal runtime configuration or require private files.
 Startup does not require a configured/reachable database.
 
@@ -40,8 +40,8 @@ npm ci
 npm run dev
 ```
 
-Open the local URL Vite prints; stop with Ctrl-C. This page identifies the product as under development and provides a minimal
-reusable auth check, without final routing or product features.
+Open the local URL Vite prints; stop with Ctrl-C. The shell identifies the product
+as under development. It has no Product V1 features.
 
 ```bash
 npm run lint
@@ -215,7 +215,7 @@ The API/PostgreSQL integration tests use the guarded disposable fixture from WP2
 and synthetic auth to prove A/B persistence, repeat identity, manipulation resistance,
 health, and concurrent identity creation. Run the complete suite with
 `TEST_DATABASE_URL` exported using the owner workflow above; skipped integration
-tests are not live PostgreSQL proof. WP4 adds only a development auth surface; final routing and product UX remain later work.
+tests are not live PostgreSQL proof. WP5 adds foundation routing; product UX remains later work.
 
 ## WP4 Supabase authentication
 
@@ -267,8 +267,8 @@ Sign-out uses `scope: 'local'`, leaving unrelated browser/device sessions alone.
 The API client obtains the current access token and sends only Authorization Bearer,
 never an owner/user ID. Tokens and passwords are not rendered or logged.
 
-The reusable auth component stays on the development page; no `/login`, `/signup`,
-or `/app` route architecture is introduced. If sign-up returns no session, the UI
+The browser provides `/login`, `/signup`, and a guarded `/app` foundation route.
+If sign-up returns no session, the UI
 asks the user to confirm email. Do not disable project confirmation policy or use
 admin credentials to bypass it. Use owner-confirmed staging accounts for testing.
 
@@ -295,13 +295,79 @@ Without staging credentials, the real-auth test explicitly skips. Without the te
 DB, both signed-fixture and real-auth PostgreSQL proofs skip. Skips are not evidence.
 Always shut down the test project afterward without deleting development volumes.
 
-For manual browser proof, migrate the local development database explicitly, export
-backend auth/database configuration, start Uvicorn with `--no-access-log`, and start
-Vite with its public configuration. Sign in as A, check `/api/me`, sign out locally,
-then repeat as B. Capture only UUIDs/status, never passwords, tokens, or API key values.
-Email confirmation remains owner-controlled. Local browser proof and real staging
-proof are distinct from mocked component tests.
+### WP5 routes and session boundary
 
-No deployment is part of WP4. WP6 must still prove the deployed chain:
+| Route | Behavior |
+| --- | --- |
+| `/` | Public foundation landing with sign-in and create-account links. |
+| `/login` | Email/password sign-in; authenticated sessions redirect to `/app`. |
+| `/signup` | Sign-up; an immediate session enters `/app`, otherwise email confirmation guidance. |
+| `/app` | Session guard, backend UUID, API/DB confirmation, local sign-out. |
+| Other | Not-found page with a home link. |
+
+One SDK subscription restores the session, processes refresh/removal events, and
+unsubscribes on unmount. Restoration has a ten-second bound; protected content never
+renders while unresolved. An expired session without an SDK refresh loses protected
+access. Auth routes redirect signed-in users; `/app` redirects signed-out users to
+`/login`. Confirmation-required signup never impersonates a signed-in session.
+Missing/invalid browser configuration shows setup guidance on auth/protected routes;
+the public landing remains available.
+
+`/app` automatically requests `/api/me` using the API client. The operation has a
+ten-second bound, including SDK session lookup. A 401, unavailable API, malformed
+response, or network failure shows a sanitized error and retry/sign-out controls.
+A backend 401 does not silently retry or claim a successful database roundtrip.
+No URL/query identity is forwarded. Results are discarded when the protected page
+unmounts or the access token changes. Supabase controls browser sessions; only the
+backend validates authorization to PostgreSQL rows. CORS is unchanged.
+
+### Owner-run WP5 local browser smoke
+
+Use the disposable database, not the personal or persistent development state.
+Do not run the destructive integration suite concurrently with this browser smoke.
+In terminal A, securely export `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` for
+the staging project, then run:
+
+```bash
+cd /home/robot/dev/event-radar-e0
+sudo docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 postgres_test
+export DATABASE_URL='postgresql+psycopg://event_radar_test:event_radar_test_local@127.0.0.1:55432/event_radar_test'
+export WEB_ORIGINS='http://127.0.0.1:5173'
+uv run alembic upgrade head
+uv run uvicorn event_radar.api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+In terminal B, provide the matching public `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY` through the process environment or ignored
+`web/.env.local` (never a secret/service-role key):
+
+```bash
+cd /home/robot/dev/event-radar-e0/web
+export VITE_API_URL='http://127.0.0.1:8000'
+npm ci
+npm run dev -- --port 5173 --strictPort
+```
+
+Open `http://127.0.0.1:5173/app` signed out: it must show login. Sign in with confirmed
+staging user A. `/app` must show A's backend UUID, API connectivity confirmed, and
+database roundtrip confirmed (`database_roundtrip=true` from `/api/me`). Reload to
+check restoration. Sign out; protected identity must disappear. Sign in as B and
+verify a distinct UUID and the same DB confirmation. Visit `/app?user_id=<A UUID>`
+and verify identity remains B. Sign out again and verify `/app` cannot show protected
+content. Capture UUIDs/status only, never tokens, passwords, or key values.
+
+Stop both servers with Ctrl-C, then in terminal A:
+
+```bash
+sudo docker compose -f docker-compose.test.yml down
+unset DATABASE_URL WEB_ORIGINS
+```
+
+This discards only test-service tmpfs data; no development volume is deleted.
+Email confirmation remains owner-controlled. Real browser proof is distinct from
+mocked component tests. SPA hosting must eventually support route fallback; WP6 owns
+hosting configuration and deployment, not WP5.
+
+No deployment is part of WP4 or WP5. WP6 must still prove the deployed chain:
 web -> Supabase Auth -> FastAPI -> PostgreSQL, including deployed origins/configuration,
 A/B isolation, refresh, and local-session sign-out. No E0 deployment claim is made here.

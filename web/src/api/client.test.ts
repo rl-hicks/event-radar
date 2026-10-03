@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMe } from './client'
 
 const client = { auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-access', user: { id: 'browser-untrusted-id' } } }, error: null }) } } as unknown as SupabaseClient
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 it('forwards only the active access token as identity proof', async () => {
   const me = { id: 'backend-id', email: null, created_at: '2026-10-03', database_roundtrip: true }
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => me })
@@ -28,4 +28,12 @@ it('does not surface provider bodies or tokens on errors', async () => {
 it('sanitizes network failures', async () => {
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('provider-secret')))
   await expect(getMe(client)).rejects.toThrow('API request could not be completed.')
+})
+
+it('bounds a stalled session lookup before fetching', async () => {
+  vi.useFakeTimers()
+  const stalled = { auth: { getSession: () => new Promise(() => {}) } } as unknown as SupabaseClient
+  const result = expect(getMe(stalled)).rejects.toThrow('API request could not be completed.')
+  await vi.advanceTimersByTimeAsync(10000)
+  await result
 })

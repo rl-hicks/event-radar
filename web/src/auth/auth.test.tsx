@@ -1,9 +1,8 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { AuthChangeEvent, Session, SupabaseClient } from '@supabase/supabase-js'
 import { signIn, signOut, signUp } from './actions'
 import { useSession } from './useSession'
-import AuthPanel from './AuthPanel'
 
 const session = { access_token: 'test-access', user: { id: 'user-a', email: 'a@example.test' } } as Session
 function fixture() {
@@ -60,25 +59,6 @@ it('loads session, tracks auth changes and unsubscribes', async () => {
   expect(unsubscribe).toHaveBeenCalledOnce()
 })
 
-it('renders reusable signup/signin controls and confirmation messaging', async () => {
-  const { client, auth, emit } = fixture()
-  render(<AuthPanel client={client} />)
-  await screen.findByRole('button', { name: 'Sign in' })
-  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@example.test' } })
-  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'test-password' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Sign up' }))
-  await screen.findByText(/Check your email to confirm/)
-  expect(screen.getByLabelText('Password')).toHaveValue('')
-  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'test-password' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
-  await waitFor(() => expect(auth.signInWithPassword).toHaveBeenCalledOnce())
-  act(() => emit(session))
-  expect(screen.getByText(/Signed in as/)).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Sign out of this browser' }))
-  await waitFor(() => expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' }))
-})
-
-
 it('recovers from a session-load error on a later valid auth event', async () => {
   const { client, auth, emit } = fixture()
   auth.getSession.mockResolvedValue({ data: { session: null }, error: { message: 'provider-secret' } })
@@ -87,4 +67,37 @@ it('recovers from a session-load error on a later valid auth event', async () =>
   act(() => emit(session))
   expect(hook.result.current.error).toBe('')
   expect(hook.result.current.session).toBe(session)
+})
+
+it('clears an expired session if Supabase has not refreshed it', async () => {
+  vi.useFakeTimers()
+  try {
+    const { client, emit } = fixture()
+    const hook = renderHook(() => useSession(client))
+    act(() => emit({ ...session, expires_at: Math.floor(Date.now() / 1000) + 2 }))
+    act(() => vi.advanceTimersByTime(2000))
+    expect(hook.result.current.session).toBeNull()
+    hook.unmount()
+  } finally { vi.useRealTimers() }
+})
+
+it('does not admit an already expired SDK session', async () => {
+  const { client, emit } = fixture()
+  const hook = renderHook(() => useSession(client))
+  act(() => emit({ ...session, expires_at: Math.floor(Date.now() / 1000) - 1 }))
+  expect(hook.result.current.session).toBeNull()
+  hook.unmount()
+})
+it('does not time out a successfully restored session', async () => {
+  vi.useFakeTimers()
+  try {
+    const { client, auth } = fixture()
+    auth.getSession.mockResolvedValue({ data: { session }, error: null })
+    const hook = renderHook(() => useSession(client))
+    await act(async () => {})
+    act(() => vi.advanceTimersByTime(10000))
+    expect(hook.result.current.session).toBe(session)
+    expect(hook.result.current.error).toBe('')
+    hook.unmount()
+  } finally { vi.useRealTimers() }
 })
