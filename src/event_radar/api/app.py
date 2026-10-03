@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -25,6 +26,9 @@ from event_radar.db.session import (
 from event_radar.db.users import get_or_create_app_user
 
 logger = logging.getLogger("event_radar.api")
+
+DatabaseSession = Annotated[Session, Depends(get_session)]
+CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
 
 
 def _error_payload(code: str, message: str) -> dict[str, dict[str, str]]:
@@ -109,15 +113,12 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/health", response_model=HealthResponse)
-    def health(session: Session = Depends(get_session)) -> HealthResponse:
+    def health(session: DatabaseSession) -> HealthResponse:
         check_database(session)
         return HealthResponse(status="ok", database="ok")
 
     @app.get("/api/me", response_model=MeResponse)
-    def me(
-        user: AuthenticatedUser = Depends(get_current_user),
-        session: Session = Depends(get_session),
-    ) -> MeResponse:
+    def me(user: CurrentUser, session: DatabaseSession) -> MeResponse:
         app_user = get_or_create_app_user(session, user.id)
         return MeResponse(
             id=app_user.id,
