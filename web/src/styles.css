@@ -1,0 +1,10 @@
+body {
+  margin: 0;
+  background: #f6f7f9;
+  color: #192536;
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+}
+main { max-width: 42rem; margin: 12vh auto; padding: 2rem; }
+h1 { font-size: clamp(2.5rem, 8vw, 4rem); line-height: 1.1; }
+.eyebrow { color: #3b526f; font-weight: 600; }

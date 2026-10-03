@@ -113,3 +113,8 @@ uv run mypy src
 uv run pytest
 git diff --check
 ```
+
+## Product development foundation
+
+See [local development](docs/local-development.md) for the isolated API, web, and
+PostgreSQL foundations. These shells do not implement product features.
