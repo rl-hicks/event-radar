@@ -18,6 +18,7 @@ from event_radar.api.config import web_origins
 from event_radar.api.dependencies import DatabaseResources
 from event_radar.api.errors import DatabaseUnavailable, error_response
 from event_radar.api.routes import router
+from event_radar.auth.config import AuthUnavailable
 
 logger = logging.getLogger("event_radar.api")
 
@@ -59,6 +60,12 @@ def create_app() -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> Response:
         return error_response(request, 422, "validation_error", "Request validation failed.")
+
+    @app.exception_handler(AuthUnavailable)
+    async def auth_unavailable(request: Request, exc: AuthUnavailable) -> Response:
+        return error_response(
+            request, 503, "authentication_unavailable", "Authentication unavailable."
+        )
 
     @app.exception_handler(DatabaseUnavailable)
     @app.exception_handler(SQLAlchemyError)

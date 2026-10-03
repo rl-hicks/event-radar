@@ -8,3 +8,7 @@ body {
 main { max-width: 42rem; margin: 12vh auto; padding: 2rem; }
 h1 { font-size: clamp(2.5rem, 8vw, 4rem); line-height: 1.1; }
 .eyebrow { color: #3b526f; font-weight: 600; }
+
+label { display: block; margin: 1rem 0; }
+input { display: block; padding: .5rem; max-width: 100%; }
+button { padding: .5rem 1rem; margin: .5rem .5rem .5rem 0; cursor: pointer; }

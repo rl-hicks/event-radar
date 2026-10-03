@@ -1,8 +1,8 @@
 # Local development foundation
 
 The personal research CLI, product API, and browser shell coexist in this repository.
-WP3 adds service health and an identity-foundation API on migration-managed
-persistence. Real authentication and frontend API requests are not implemented.
+WP4 adds Supabase user-token validation and a development browser auth check
+on migration-managed identity persistence. This is not Product V1.
 The API does not import personal runtime configuration or require private files.
 Startup does not require a configured/reachable database.
 
@@ -22,7 +22,8 @@ uv run uvicorn event_radar.api.app:create_app --factory --host 127.0.0.1 --port 
 
 The API starts without connecting to PostgreSQL. Stop it with Ctrl-C.
 `GET /health` returns 200 when the configured DB responds, otherwise 503.
-`GET /api/me` returns 401 until WP4 supplies real authentication.
+`GET /api/me` requires a validated Supabase access token. Missing tokens return 401;
+unconfigured/provider-unavailable authentication returns a sanitized 503.
 
 The existing `uv run event-radar` command remains the personal production runner.
 It requires private context/state and credentials, performs research, polls Telegram,
@@ -39,8 +40,8 @@ npm ci
 npm run dev
 ```
 
-Open the local URL Vite prints; stop with Ctrl-C. This page only identifies the
-product as under development. It has no API requests or account features.
+Open the local URL Vite prints; stop with Ctrl-C. This page identifies the product as under development and provides a minimal
+reusable auth check, without final routing or product features.
 
 ```bash
 npm run lint
@@ -49,8 +50,8 @@ npm test -- --run
 npm run build
 ```
 
-No browser environment variables are currently required. Future `VITE_*` values
-are public browser configuration. Never place backend credentials, `DATABASE_URL`,
+An unconfigured browser shows setup guidance. Configure the public `VITE_*` values
+in `web/.env.local` to enable Supabase auth and API calls. Never place backend credentials, `DATABASE_URL`,
 OpenAI keys, Telegram tokens, or service-role secrets in them. See `web/.env.example`.
 
 ## Local PostgreSQL and future migrations
@@ -179,13 +180,12 @@ connectivity produces 503 with unavailable status and a sanitized error envelope
 It checks `SELECT 1`; it does not validate migration currency, create schema, or
 run migrations. WP2 engine timeout settings bound connection/pool/statement waits.
 
-`GET /api/me` obtains identity exclusively from `get_current_user()`. This dependency
-always returns 401 with `WWW-Authenticate: Bearer` in WP3, even for supplied bearer
-tokens. No token is parsed or trusted. Supabase JWT verification belongs to WP4.
-Only tests override the dependency with synthetic `AuthenticatedUser` objects;
-there is no runtime bypass flag, test token, or identity header.
+`GET /api/me` obtains identity exclusively from `get_current_user()`. WP4 validates
+Supabase user tokens before constructing identity; arbitrary bearer strings, user
+IDs, and API keys are not authentication. Tests may override the identity dependency
+or use ephemeral signed tokens, but there is no runtime bypass flag or test token.
 
-When tests provide an identity, the route gets or creates its UUID `app_users` row
+With a validated identity, the route gets or creates its UUID `app_users` row
 and returns `id`, identity-provided `email`, `created_at`, and `database_roundtrip`.
 Email is never persisted. Query/body/header user IDs have no effect. PostgreSQL
 `ON CONFLICT DO NOTHING` handles competing inserts; subsequent lookup uses the
@@ -215,4 +215,93 @@ The API/PostgreSQL integration tests use the guarded disposable fixture from WP2
 and synthetic auth to prove A/B persistence, repeat identity, manipulation resistance,
 health, and concurrent identity creation. Run the complete suite with
 `TEST_DATABASE_URL` exported using the owner workflow above; skipped integration
-tests are not live PostgreSQL proof. No browser auth or product UX is included.
+tests are not live PostgreSQL proof. WP4 adds only a development auth surface; final routing and product UX remain later work.
+
+## WP4 Supabase authentication
+
+Backend configuration is read from process environment only (not legacy `.env`):
+
+```text
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
+SUPABASE_JWT_AUDIENCE=authenticated
+```
+
+Set the matching public browser configuration in ignored `web/.env.local`:
+
+```text
+VITE_SUPABASE_URL=
+VITE_SUPABASE_PUBLISHABLE_KEY=
+VITE_API_URL=http://localhost:8000
+```
+
+Use current `sb_publishable_` keys. These keys identify an application component,
+not a user, and are safe to distribute in the browser. Secret keys, legacy
+service-role keys, database passwords, and shared JWT signing secrets are forbidden
+in browser configuration. This implementation requires no such privileged key.
+URLs require HTTPS except explicit localhost/127.0.0.1 development endpoints.
+`VITE_API_URL` is optional and defaults to `http://localhost:8000`.
+Keep `WEB_ORIGINS` aligned with the actual Vite origin.
+
+The backend intentionally supports ES256 and RS256 via the configured project's
+`/auth/v1/.well-known/jwks.json`. PyJWT performs signature, expiration, issuer,
+audience, and subject validation. Required role is `authenticated`, subject must be
+a UUID, and issuer must exactly match `<SUPABASE_URL>/auth/v1`. The token's header
+only selects an allowlisted mechanism; remote key URLs supplied by tokens are ignored.
+PyJWT caches JWKS for five minutes (no permanent per-key cache), uses five-second
+network timeouts, and bounds forced refreshes with its default cooldown. Configuration
+and verifier construction perform no network I/O. Key rotation may require the
+library's refresh cooldown/cache interval; invalid tokens never fail open.
+
+HS256 compatibility uses GET `/auth/v1/user` with the publishable `apikey` header
+and the user's bearer token, with a five-second timeout and no redirects. No shared
+JWT secret is stored or used. Only after Auth accepts that exact token do we enforce
+issuer/audience/expiry/role/UUID policy and compare subject to the authoritative user
+ID. Email comes from the Auth response. Failed asymmetric verification never falls
+back to this path. Malformed or rejected tokens return 401; unavailable configuration
+or providers return sanitized 503. `/health` remains only API/database connectivity.
+
+Browser sign-up/sign-in use email/password through the official Supabase JS client.
+Session persistence and automatic refresh use the SDK defaults explicitly enabled.
+Sign-out uses `scope: 'local'`, leaving unrelated browser/device sessions alone.
+The API client obtains the current access token and sends only Authorization Bearer,
+never an owner/user ID. Tokens and passwords are not rendered or logged.
+
+The reusable auth component stays on the development page; no `/login`, `/signup`,
+or `/app` route architecture is introduced. If sign-up returns no session, the UI
+asks the user to confirm email. Do not disable project confirmation policy or use
+admin credentials to bypass it. Use owner-confirmed staging accounts for testing.
+
+### Owner-controlled live verification
+
+Provide a staging project with the current publishable key and two distinct confirmed
+email/password users. Do not commit credentials or place them in shell history.
+Export backend variables above plus these test-only environment variables using your
+normal secure terminal setup:
+
+```text
+SUPABASE_TEST_USER_A_EMAIL
+SUPABASE_TEST_USER_A_PASSWORD
+SUPABASE_TEST_USER_B_EMAIL
+SUPABASE_TEST_USER_B_PASSWORD
+```
+
+Start only the disposable PostgreSQL service using the earlier owner workflow, export
+`TEST_DATABASE_URL`, then run `uv run pytest --tb=short`. The opt-in real-auth test
+signs in existing A/B users, checks `/api/me`, repeat row identity, distinct rows, and
+attempted B-to-A impersonation. It creates no Supabase users and changes no user
+metadata or project settings. Sensitive real-auth failures suppress traceback details.
+Without staging credentials, the real-auth test explicitly skips. Without the test
+DB, both signed-fixture and real-auth PostgreSQL proofs skip. Skips are not evidence.
+Always shut down the test project afterward without deleting development volumes.
+
+For manual browser proof, migrate the local development database explicitly, export
+backend auth/database configuration, start Uvicorn with `--no-access-log`, and start
+Vite with its public configuration. Sign in as A, check `/api/me`, sign out locally,
+then repeat as B. Capture only UUIDs/status, never passwords, tokens, or API key values.
+Email confirmation remains owner-controlled. Local browser proof and real staging
+proof are distinct from mocked component tests.
+
+No deployment is part of WP4. WP6 must still prove the deployed chain:
+web -> Supabase Auth -> FastAPI -> PostgreSQL, including deployed origins/configuration,
+A/B isolation, refresh, and local-session sign-out. No E0 deployment claim is made here.

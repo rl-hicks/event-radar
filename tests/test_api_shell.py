@@ -67,6 +67,8 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
         "PATH": os.environ.get("PATH", ""),
         "PYTHONPATH": str(source),
         "PYTHONDONTWRITEBYTECODE": "1",
+        "SUPABASE_URL": "https://project.example.test",
+        "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_isolation_fixture",
     }
     result = subprocess.run(
         [sys.executable, "-B", "-c", script],
