@@ -1,10 +1,9 @@
+# Automatic personal Thursday delivery suspended by owner decision on 2026-10-03.
+# Explicit workflow_dispatch remains available for controlled legacy runs.
 name: Event Radar
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "15 19 * * 4"
-    - cron: "15 20 * * 4"
 
 permissions:
   contents: read
