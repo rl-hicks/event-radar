@@ -374,3 +374,49 @@ A/B isolation, refresh, and local-session sign-out. No E0 deployment claim is ma
 
 WP6 staging configuration and owner deployment steps: [deployment.md](deployment.md).
 Repository configuration alone does not establish deployed verification.
+
+## WP7 deterministic regression CI
+
+`.github/workflows/product-foundation-ci.yml` (Product Foundation CI) runs on pull
+requests targeting main, pushes to main, and the exact `codex/e0-wp7-ci-regression`
+branch for pre-merge evidence. Retire that narrow branch trigger when its branch
+retires. No manual production dispatch, hosted migration, or deployment is included.
+
+Two independent jobs run on Ubuntu 24.04 with read-only contents permissions and a
+workflow-specific cancellation group, separate from personal production:
+
+- **Python and PostgreSQL:** Python 3.13 / uv 0.11.28; frozen dependencies, Ruff
+  formatting/lint, mypy, diff whitespace, CLI help only, Alembic heads/history, and
+  the complete pytest suite against disposable PostgreSQL 17.
+- **Web:** Node 24; npm ci, ESLint, TypeScript, Vitest, and the Vite production build.
+  Supabase browser environment values are not required by these deterministic tests.
+
+The Python job starts only `postgres_test` from `docker-compose.test.yml`, with the
+existing guarded localhost:55432 test URL. It never checks out private runtime
+state or receives production/hosted secrets. The fixture migrates and cleans only
+the disposable test schema. Compose down runs with `always()` even on failure;
+no development volume is deleted. Tests run sequentially against that database.
+
+A JUnit report check requires all five database/API/signed-token integration tests
+to have passed. Missing, skipped, failed, or renamed required tests cannot silently
+count as evidence. Only `test_real_supabase_users` may skip: it requires intentionally
+absent real provider/test-user credentials. Ordinary CI is expected to report
+355 passed and one hosted-Supabase skip at the WP7 baseline. The migration roundtrip
+asserts revision `0001_app_users`, exact columns/types/defaults, and zero ORM drift.
+
+Inspect the Product Foundation CI run's two jobs and the named PostgreSQL-evidence
+step, not the separate Event Radar production workflow. A red database startup step
+means no integration proof exists; a skip-check failure needs investigation rather
+than disabling checks. Logs include bounded disposable-database diagnostics on
+failure. No CI job calls the research CLI without --help.
+
+```bash
+gh run list --workflow product-foundation-ci.yml --branch codex/e0-wp7-ci-regression
+gh run view RUN_ID
+gh run view RUN_ID --log-failed
+```
+
+Local equivalents are documented above. If local Docker requires owner sudo,
+use the isolated PostgreSQL owner procedure; GitHub-hosted runner execution is a
+separate evidence source. Never configure hosted DATABASE_URL or Supabase passwords
+in this workflow just to eliminate the intentional real-provider skip.
