@@ -24,6 +24,11 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync
+      - name: Upload refreshed uv lock
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e0-uv-lock
+          path: uv.lock
       - name: Format check
         run: uv run ruff format --check .
       - name: Lint
@@ -51,11 +56,11 @@ jobs:
           node-version: 22
       - name: Install dependencies and generate lock
         run: npm install
-      - name: Emit package lock for E0 bootstrap
-        run: |
-          printf 'EVENT_RADAR_LOCK_GZ_B64='
-          gzip -c package-lock.json | base64 -w0
-          printf '\n'
+      - name: Upload generated package lock
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e0-package-lock
+          path: web/package-lock.json
       - name: Lint
         run: npm run lint
       - name: Type check
