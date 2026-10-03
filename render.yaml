@@ -1,0 +1,26 @@
+# Staging only. Import this Blueprint from the WP6 branch; review the free plan.
+services:
+  - type: web
+    name: event-radar-api-staging
+    runtime: python
+    plan: free
+    branch: codex/e0-wp6-deployment-foundation
+    autoDeployTrigger: "off"
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: .venv/bin/uvicorn event_radar.api.app:create_app --factory --host 0.0.0.0 --port $PORT --no-access-log
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.14
+      - key: UV_VERSION
+        value: 0.11.28
+      - key: DATABASE_URL
+        sync: false
+      - key: WEB_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated

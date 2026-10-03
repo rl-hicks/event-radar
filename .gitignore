@@ -35,3 +35,13 @@ data/*
 *.db
 *.sqlite
 *.sqlite3
+
+# Product development artifacts and local environment overrides
+node_modules/
+web/dist/
+web/coverage/
+.env.*
+!.env.example
+
+# Provider-generated local project metadata (all worktrees/clones).
+.vercel/

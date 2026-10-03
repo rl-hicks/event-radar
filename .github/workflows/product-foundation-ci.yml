@@ -1,0 +1,129 @@
+name: Product Foundation CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - main
+      # Narrow pre-merge verification trigger; remove when this branch retires.
+      - codex/e0-wp7-ci-regression
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-foundation-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-postgres:
+    name: Python and PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://event_radar_test:event_radar_test_local@127.0.0.1:55432/event_radar_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.28"
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install locked Python dependencies
+        run: uv sync --frozen
+      - name: Tracked-source security baseline
+        run: uv run python scripts/check_security.py
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Lint
+        run: uv run ruff check .
+      - name: Type check
+        run: uv run mypy src
+      - name: Diff whitespace
+        run: git diff --check
+      - name: CLI help only
+        run: uv run event-radar --help
+      - name: Alembic metadata only
+        run: |
+          uv run alembic heads
+          uv run alembic history
+      - name: Start disposable PostgreSQL 17
+        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 postgres_test
+      - name: PostgreSQL readiness
+        run: |
+          docker compose -f docker-compose.test.yml ps
+          docker compose -f docker-compose.test.yml exec -T postgres_test pg_isready -U event_radar_test -d event_radar_test
+      - name: Complete Python suite with PostgreSQL
+        run: uv run pytest -ra --junitxml="$RUNNER_TEMP/python-results.xml"
+      - name: Require live PostgreSQL evidence
+        env:
+          TEST_REPORT: ${{ runner.temp }}/python-results.xml
+        run: |
+          uv run python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          required = {
+              ("tests.test_database_integration", "test_migration_roundtrip_and_metadata"),
+              ("tests.test_database_integration", "test_identity_persistence_and_session_lifecycle"),
+              ("tests.test_api_integration", "test_api_identity_postgres_roundtrip"),
+              ("tests.test_api_integration", "test_concurrent_identity_creation"),
+              ("tests.test_supabase_integration", "test_signed_tokens_through_api_postgres"),
+          }
+          allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
+          cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
+          passed = set()
+          for case in cases:
+              identity = (case.get("classname"), case.get("name"))
+              if case.find("skipped") is not None:
+                  if identity != allowed_skip:
+                      raise SystemExit(f"Unexpected skipped test: {identity}")
+                  print("Expected opt-in hosted Supabase skip (no provider credentials).")
+              elif case.find("failure") is None and case.find("error") is None:
+                  passed.add(identity)
+          missing = required - passed
+          if missing:
+              raise SystemExit(f"Required PostgreSQL tests did not pass: {sorted(missing)}")
+          for identity in sorted(required):
+              print("Verified PostgreSQL PASS:", "::".join(identity))
+          PY
+      - name: Database diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.test.yml ps
+          docker compose -f docker-compose.test.yml logs --no-color --tail 100 postgres_test
+      - name: Stop disposable PostgreSQL
+        if: always()
+        run: docker compose -f docker-compose.test.yml down
+
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked web dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test -- --run
+      - name: Production build only
+        run: npm run build
+      - name: Built frontend security baseline
+        run: python3 ../scripts/check_security.py --dist dist
