@@ -45,10 +45,13 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
         sys.addaudithook(guard)
         from event_radar.api.app import create_app
         from event_radar import auth
-        from event_radar.db.base import Base
+        from event_radar.db.models import Base
+        import event_radar.db.session
+        import event_radar.db.health
+        import event_radar.db.config
         from fastapi.testclient import TestClient
 
-        assert not Base.metadata.tables
+        assert set(Base.metadata.tables) == {"app_users"}
         app = create_app()
         assert not app.routes
         with TestClient(app) as client:

@@ -1,0 +1,19 @@
+# Separate Compose project and disposable storage; never includes the dev DB.
+name: event-radar-test
+services:
+  postgres_test:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: event_radar_test
+      POSTGRES_USER: event_radar_test
+      POSTGRES_PASSWORD: event_radar_test_local
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U event_radar_test -d event_radar_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
