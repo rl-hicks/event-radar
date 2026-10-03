@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: event-radar-api
+    runtime: python
+    buildCommand: uv sync --frozen
+    startCommand: uv run uvicorn event_radar.api.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
+      - key: WEB_ORIGINS
+        sync: false
