@@ -30,9 +30,6 @@ class Settings(BaseSettings):
     )
     openai_api_key: SecretStr | None = None
     openai_model: str = DEFAULT_OPENAI_MODEL
-    # Standard token-only estimates, keyed by the exact requested model ID.
-    # https://developers.openai.com/api/docs/models/gpt-5.6-sol (gpt-5.6 alias)
-    # https://developers.openai.com/api/docs/models/gpt-6.1-sol
     openai_model_pricing: dict[str, ModelPricingRates] = Field(
         default_factory=lambda: {
             DEFAULT_OPENAI_MODEL: ModelPricingRates(
@@ -56,6 +53,14 @@ class Settings(BaseSettings):
     curation_prompt_path: Path = Path("prompts/weekend_curation.md")
     curation_output_dir: Path = Path("output")
 
+    # E0 public-product foundation. These are optional at import time so the
+    # existing personal CLI remains usable without web/API configuration.
+    database_url: SecretStr | None = None
+    web_origins: str = "http://localhost:5173"
+    supabase_url: str | None = None
+    supabase_jwt_audience: str = "authenticated"
+    supabase_jwt_secret: SecretStr | None = None
+
     @property
     def resolved_event_analysis_model(self) -> str:
         return self.openai_event_analysis_model or self.openai_model
@@ -67,6 +72,10 @@ class Settings(BaseSettings):
     @property
     def resolved_curation_model(self) -> str:
         return self.openai_curation_model or self.openai_model
+
+    @property
+    def web_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.web_origins.split(",") if origin.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env",
