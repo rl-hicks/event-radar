@@ -1,8 +1,8 @@
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from event_radar.config import settings
 from event_radar.db import models as _models  # noqa: F401
 from event_radar.db.base import Base
