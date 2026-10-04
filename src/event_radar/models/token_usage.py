@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Protocol, TypedDict
+from typing import Protocol, TypedDict, cast
 
 from pydantic import BaseModel
 
@@ -10,10 +10,6 @@ class ModelPricingRatesLike(Protocol):
     input_usd_per_million: float
     cached_input_usd_per_million: float | None
     output_usd_per_million: float
-
-
-class ModelPricingSettingsLike(Protocol):
-    openai_model_pricing: Mapping[str, ModelPricingRatesLike]
 
 
 @dataclass(frozen=True)
@@ -39,11 +35,13 @@ class ModelTokenPricing:
         return cls.from_rates(pricing.get(model))
 
     @classmethod
-    def from_settings(
-        cls, config: ModelPricingSettingsLike, model: str
-    ) -> "ModelTokenPricing | None":
+    def from_settings(cls, config: object, model: str) -> "ModelTokenPricing | None":
         """Compatibility adapter without importing the legacy Settings module."""
-        return cls.from_mapping(config.openai_model_pricing, model)
+        pricing = cast(
+            Mapping[str, ModelPricingRatesLike],
+            getattr(config, "openai_model_pricing"),
+        )
+        return cls.from_mapping(pricing, model)
 
 
 class TokenUsage(BaseModel):
