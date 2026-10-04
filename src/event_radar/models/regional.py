@@ -406,23 +406,18 @@ class RegionalOpportunity(Contract):
         for occurrence in self.occurrences:
             require(occurrence.location.evidence_ids, "location")
             require(occurrence.evidence_ids, "time")
-            if any(
-                _instant(registry[i].occurrence_start) != _instant(occurrence.start)
-                or (
-                    registry[i].occurrence_end is not None
-                    and (
-                        occurrence.end is None
-                        or _instant(registry[i].occurrence_end) != _instant(occurrence.end)
-                    )
-                )
-                for i in occurrence.evidence_ids
-            ):
-                raise ValueError("Occurrence times must match source-extracted evidence.")
-            if occurrence.end is not None and not any(
-                registry[i].occurrence_end is not None
-                and _instant(registry[i].occurrence_end) == _instant(occurrence.end)
-                for i in occurrence.evidence_ids
-            ):
+            has_matching_end = False
+            for evidence_id in occurrence.evidence_ids:
+                evidence = registry[evidence_id]
+                evidence_start = evidence.occurrence_start
+                if evidence_start is None or _instant(evidence_start) != _instant(occurrence.start):
+                    raise ValueError("Occurrence times must match source-extracted evidence.")
+                evidence_end = evidence.occurrence_end
+                if evidence_end is not None:
+                    if occurrence.end is None or _instant(evidence_end) != _instant(occurrence.end):
+                        raise ValueError("Occurrence times must match source-extracted evidence.")
+                    has_matching_end = True
+            if occurrence.end is not None and not has_matching_end:
                 raise ValueError("Known occurrence end requires matching end-time evidence.")
             for quote in occurrence.price.quotes:
                 require(quote.evidence_ids, "price")
