@@ -33,7 +33,9 @@ Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._-]*$", max_length=
 Count = Annotated[int, Field(ge=0, strict=True)]
 Amount = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
 Confidence = Literal["high", "moderate", "low", "unknown"]
-Claim = Literal["existence", "location", "time", "price", "description", "access", "availability", "route"]
+Claim = Literal[
+    "existence", "location", "time", "price", "description", "access", "availability", "route"
+]
 
 
 def _invalid_text() -> str:
@@ -47,24 +49,52 @@ def _instant(value: datetime) -> datetime:
 
 # Bounded, canonical citation policy. These are event selectors, not an invitation
 # to accept arbitrary provider queries or to silently strip an identifying query.
-_PUBLIC_SELECTORS = frozenset({
-    "event", "event_id", "eventid", "eid", "id", "listing_id", "occurrence_id",
-    "post_id", "p", "slug",
-})
+_PUBLIC_SELECTORS = frozenset(
+    {
+        "event",
+        "event_id",
+        "eventid",
+        "eid",
+        "id",
+        "listing_id",
+        "occurrence_id",
+        "post_id",
+        "p",
+        "slug",
+    }
+)
 _PUBLIC_SELECTOR_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,127}\Z", re.ASCII)
 _BLOCKED_HOST_SUFFIXES = (
-    ".localhost", ".local", ".internal", ".lan", ".home", ".onion",
-    ".test", ".invalid", ".example", ".arpa", ".corp", ".intranet",
+    ".localhost",
+    ".local",
+    ".internal",
+    ".lan",
+    ".home",
+    ".onion",
+    ".test",
+    ".invalid",
+    ".example",
+    ".arpa",
+    ".corp",
+    ".intranet",
 )
 
 
 def _validate_public_evidence_url(url: HttpUrl) -> None:
     """Syntactic guard only; callers must not fetch/resolve untrusted URLs directly."""
     host = (url.host or "").lower()
-    if url.scheme != "https" or url.port not in (None, 443) or url.username or url.password or url.fragment:
+    if (
+        url.scheme != "https"
+        or url.port not in (None, 443)
+        or url.username
+        or url.password
+        or url.fragment
+    ):
         raise ValueError("Evidence requires a canonical HTTPS URL without credentials/fragment.")
     if (
-        not host or host.endswith(".") or "." not in host
+        not host
+        or host.endswith(".")
+        or "." not in host
         or host in {"localhost", "metadata.google.internal"}
         or host.endswith(_BLOCKED_HOST_SUFFIXES)
         or not re.fullmatch(r"[a-z0-9.-]+", host, re.ASCII)
@@ -79,7 +109,9 @@ def _validate_public_evidence_url(url: HttpUrl) -> None:
         raise ValueError("IP-literal evidence URLs are not permitted.")
     if url.query:
         try:
-            pairs = parse_qsl(url.query, keep_blank_values=True, strict_parsing=True, max_num_fields=4)
+            pairs = parse_qsl(
+                url.query, keep_blank_values=True, strict_parsing=True, max_num_fields=4
+            )
         except ValueError as exc:
             raise ValueError("Evidence URL query is not a bounded event selector.") from exc
         keys = [key.lower() for key, _ in pairs]
@@ -228,10 +260,13 @@ class SourceEvidence(Contract):
         if ("time" in self.claims) != (self.occurrence_start is not None):
             raise ValueError("Time evidence requires an extracted occurrence start.")
         if self.occurrence_end is not None and (
-            self.occurrence_start is None or _instant(self.occurrence_end) <= _instant(self.occurrence_start)
+            self.occurrence_start is None
+            or _instant(self.occurrence_end) <= _instant(self.occurrence_start)
         ):
             raise ValueError("Evidence end must follow start.")
-        if self.published_at is not None and _instant(self.published_at) > _instant(self.observed_at):
+        if self.published_at is not None and _instant(self.published_at) > _instant(
+            self.observed_at
+        ):
             raise ValueError("Publication cannot follow observation.")
         return self
 
@@ -374,7 +409,10 @@ class RegionalOpportunity(Contract):
                 _instant(registry[i].occurrence_start) != _instant(occurrence.start)
                 or (
                     registry[i].occurrence_end is not None
-                    and (occurrence.end is None or _instant(registry[i].occurrence_end) != _instant(occurrence.end))
+                    and (
+                        occurrence.end is None
+                        or _instant(registry[i].occurrence_end) != _instant(occurrence.end)
+                    )
                 )
                 for i in occurrence.evidence_ids
             ):
@@ -522,7 +560,9 @@ class RegionalWeekendUniverse(Contract):
         _unique(tuple(s.source_id for s in self.sources))
         sources = {s.source_id: s for s in self.sources}
         for source in self.sources:
-            if source.observed_at is not None and _instant(source.observed_at) > _instant(self.scope.as_of):
+            if source.observed_at is not None and _instant(source.observed_at) > _instant(
+                self.scope.as_of
+            ):
                 raise ValueError("Source observation cannot follow as_of.")
         for opportunity in self.opportunities:
             for evidence in opportunity.evidence:
