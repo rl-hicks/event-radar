@@ -7,6 +7,8 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC
 
+from pydantic import StrictBool
+
 from event_radar.models.regional import (
     FactualExclusion,
     ImportantUnknown,
@@ -163,7 +165,7 @@ def _merge_price(first: Price, second: Price) -> Price:
     for quote in quotes:
         key = (quote.minimum, quote.maximum, quote.currency, quote.details)
         groups.setdefault(key, []).append(quote)
-    reconciled = []
+    reconciled: list[PriceQuote] = []
     for values in groups.values():
         quote = values[0]
         reconciled.append(
@@ -181,7 +183,10 @@ def _merge_price(first: Price, second: Price) -> Price:
     )
 
 
-def _merge_categories(first, second):
+def _merge_categories(
+    first: Observation[tuple[str, ...]],
+    second: Observation[tuple[str, ...]],
+) -> Observation[tuple[str, ...]]:
     known = [item for item in (first, second) if item.state == "known"]
     if not known:
         return Observation[tuple[str, ...]](
@@ -196,14 +201,17 @@ def _merge_categories(first, second):
     )
 
 
-def _merge_bool_observation(first, second):
+def _merge_bool_observation(
+    first: Observation[StrictBool],
+    second: Observation[StrictBool],
+) -> Observation[StrictBool]:
     known = [item for item in (first, second) if item.state == "known"]
     if not known:
-        return Observation[bool](state="unknown", value=None, evidence_ids=())
+        return Observation[StrictBool](state="unknown", value=None, evidence_ids=())
     values = {item.value for item in known}
     if len(values) != 1:
-        return Observation[bool](state="unknown", value=None, evidence_ids=())
-    return Observation[bool](
+        return Observation[StrictBool](state="unknown", value=None, evidence_ids=())
+    return Observation[StrictBool](
         state="known",
         value=known[0].value,
         evidence_ids=tuple(sorted({eid for item in known for eid in item.evidence_ids})),
@@ -230,12 +238,18 @@ def _location_score(value: Location) -> tuple[int, str, str]:
     )
 
 
-def _merge_unknowns(first, second):
+def _merge_unknowns(
+    first: tuple[ImportantUnknown, ...],
+    second: tuple[ImportantUnknown, ...],
+) -> tuple[ImportantUnknown, ...]:
     unique = {(item.kind, item.detail): item for item in (*first, *second)}
     return tuple(unique[key] for key in sorted(unique))
 
 
-def _append_unknown(values, item):
+def _append_unknown(
+    values: tuple[ImportantUnknown, ...],
+    item: ImportantUnknown,
+) -> tuple[ImportantUnknown, ...]:
     return _merge_unknowns(values, (item,))
 
 
