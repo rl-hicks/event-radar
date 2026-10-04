@@ -16,8 +16,7 @@ def test_initial_sonoma_sources_register_through_shared_adapter_contract() -> No
 
     registry = default_sonoma_source_registry(user_agent="EventRadar/Test")
     assert tuple(
-        registration.adapter.descriptor.source_id
-        for registration in registry.registrations
+        registration.adapter.descriptor.source_id for registration in registry.registrations
     ) == (
         "sonoma-county-tourism",
         "happening-sonoma-county",
