@@ -59,6 +59,9 @@ def test_catalog_records_preserve_schema_and_invariants() -> None:
     assert all(hike.trail_sequence for hike in catalog.hikes)
     assert all(hike.official_source_url.scheme in {"http", "https"} for hike in catalog.hikes)
     assert all(hike.dynamic_status_check_required is True for hike in catalog.hikes)
+    assert sum(hike.county == "Sonoma County" for hike in catalog.hikes) == 25
+    assert sum(hike.county == "Marin County" for hike in catalog.hikes) == 8
+    assert sum(hike.county == "Napa County" for hike in catalog.hikes) == 2
     assert all(37.8 <= hike.latitude <= 38.7 for hike in catalog.hikes)
     assert all(-123.4 <= hike.longitude <= -122.4 for hike in catalog.hikes)
     assert all(
