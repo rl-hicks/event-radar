@@ -14,6 +14,7 @@ from event_radar.models.regional import (
     ResearchScope,
     SourceCoverage,
 )
+from event_radar.shared.deduplication import deduplicate_regional_opportunities
 
 SourceClass = Literal[
     "regional_calendar",
@@ -106,6 +107,7 @@ class RegionalCollectionBatch:
     exclusions: tuple[FactualExclusion, ...]
     sources: tuple[SourceCoverage, ...]
     coverage: SourceCoverageAssessment
+    duplicates_removed: int
 
 
 class SourceRegistry:
@@ -220,9 +222,10 @@ async def collect_registered_sources(
             }
         )
     )
+    deduplicated = deduplicate_regional_opportunities(tuple(opportunities))
     return RegionalCollectionBatch(
-        opportunities=tuple(opportunities),
-        exclusions=tuple(exclusions),
+        opportunities=deduplicated.opportunities,
+        exclusions=tuple((*exclusions, *deduplicated.exclusions)),
         sources=tuple(coverages),
         coverage=SourceCoverageAssessment(
             enabled_source_ids=tuple(item.adapter.descriptor.source_id for item in enabled),
@@ -234,6 +237,7 @@ async def collect_registered_sources(
             searched_source_classes=searched_classes,
             unsearched_source_classes=unsearched_classes,
         ),
+        duplicates_removed=deduplicated.duplicates_removed,
     )
 
 
