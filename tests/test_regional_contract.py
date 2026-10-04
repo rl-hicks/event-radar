@@ -579,7 +579,9 @@ def test_repeated_hour_distinct_instants_are_not_collapsed_as_duplicate_occurren
     second["occurrence_id"] = "workshop-standard-hour"
     evidence2 = copy.deepcopy(evidence)
     evidence2["evidence_id"] = "calendar-standard-hour"
-    second["start"] = evidence2["occurrence_start"] = datetime(2026, 11, 1, 1, 30, tzinfo=la, fold=1)
+    second["start"] = evidence2["occurrence_start"] = datetime(
+        2026, 11, 1, 1, 30, tzinfo=la, fold=1
+    )
     second["end"] = evidence2["occurrence_end"] = datetime(2026, 11, 1, 1, 40, tzinfo=la, fold=1)
     second["evidence_ids"] = [evidence2["evidence_id"]]
     event["evidence"].append(evidence2)
