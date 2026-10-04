@@ -516,6 +516,7 @@ def test_sonoma_research_identity_cannot_alias_a_different_region(field, replace
 def test_autumn_repeated_hour_uses_actual_instants_for_occurrence_and_evidence():
     from datetime import datetime
     from zoneinfo import ZoneInfo
+
     from event_radar.models.regional import Occurrence, SourceEvidence
 
     la = ZoneInfo("America/Los_Angeles")
@@ -539,6 +540,7 @@ def test_autumn_repeated_hour_uses_actual_instants_for_occurrence_and_evidence()
 def test_autumn_repeated_hour_uses_actual_instants_for_publication_and_as_of():
     from datetime import datetime
     from zoneinfo import ZoneInfo
+
     from event_radar.models.regional import SourceEvidence
 
     la = ZoneInfo("America/Los_Angeles")
