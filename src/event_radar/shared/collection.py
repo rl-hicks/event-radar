@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import re
 from typing import Literal, Protocol
 
 from event_radar.models.regional import (
@@ -44,8 +45,8 @@ class RegionalSourceDescriptor:
     region_ids: tuple[str, ...] = ("sonoma-county-ca",)
 
     def __post_init__(self) -> None:
-        if not self.source_id or any(ch.isspace() for ch in self.source_id):
-            raise ValueError("Source ID must be non-empty and contain no whitespace.")
+        if re.fullmatch(r"^[a-z0-9][a-z0-9._-]{0,119}$", self.source_id) is None:
+            raise ValueError("Source ID must use the regional identifier format.")
         if not self.coverage_description.strip():
             raise ValueError("Source coverage description must be non-empty.")
         if not self.opportunity_kinds:
@@ -199,13 +200,23 @@ async def collect_registered_sources(
             )
         )
 
-    searched_classes = tuple(sorted({item.adapter.descriptor.source_class for item in enabled}))
+    attempted_ids = set(attempted)
+    searched_classes = tuple(
+        sorted(
+            {
+                item.adapter.descriptor.source_class
+                for item in enabled
+                if item.adapter.descriptor.source_id in attempted_ids
+            }
+        )
+    )
     unsearched_classes = tuple(
         sorted(
             {
                 item.adapter.descriptor.source_class
-                for item in disabled
-                if item.adapter.descriptor.source_class not in searched_classes
+                for item in registry.registrations
+                if item.adapter.descriptor.source_id not in attempted_ids
+                and item.adapter.descriptor.source_class not in searched_classes
             }
         )
     )
