@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date, datetime
+from decimal import Decimal
 
 from event_radar.models.hike import Hike, HikeCatalog
 from event_radar.models.regional import (
@@ -121,7 +122,7 @@ def hike_to_regional_opportunity(
         ),
         occurrences=(),
         route=RouteFacts(
-            distance_miles=str(hike.distance_miles),
+            distance_miles=Decimal(str(hike.distance_miles)),
             elevation_gain_ft=hike.elevation_gain_ft,
             route_description=route_description,
             evidence_ids=(evidence_id,),
