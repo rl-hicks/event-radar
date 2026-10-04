@@ -1,11 +1,19 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TypedDict
+from typing import Protocol, TypedDict
 
 from pydantic import BaseModel
 
-from event_radar.config import Settings
+
+class ModelPricingRatesLike(Protocol):
+    input_usd_per_million: float
+    cached_input_usd_per_million: float | None
+    output_usd_per_million: float
+
+
+class ModelPricingSettingsLike(Protocol):
+    openai_model_pricing: Mapping[str, ModelPricingRatesLike]
 
 
 @dataclass(frozen=True)
@@ -15,8 +23,7 @@ class ModelTokenPricing:
     output_usd_per_million: float
 
     @classmethod
-    def from_settings(cls, config: Settings, model: str) -> "ModelTokenPricing | None":
-        rates = config.openai_model_pricing.get(model)
+    def from_rates(cls, rates: ModelPricingRatesLike | None) -> "ModelTokenPricing | None":
         if rates is None:
             return None
         return cls(
@@ -24,6 +31,19 @@ class ModelTokenPricing:
             rates.cached_input_usd_per_million,
             rates.output_usd_per_million,
         )
+
+    @classmethod
+    def from_mapping(
+        cls, pricing: Mapping[str, ModelPricingRatesLike], model: str
+    ) -> "ModelTokenPricing | None":
+        return cls.from_rates(pricing.get(model))
+
+    @classmethod
+    def from_settings(
+        cls, config: ModelPricingSettingsLike, model: str
+    ) -> "ModelTokenPricing | None":
+        """Compatibility adapter without importing the legacy Settings module."""
+        return cls.from_mapping(config.openai_model_pricing, model)
 
 
 class TokenUsage(BaseModel):
@@ -53,7 +73,7 @@ def parse_token_usage(usage: object, pricing: ModelTokenPricing | None) -> Token
     if pricing is not None and result.input_tokens is not None and result.output_tokens is not None:
         cached = result.cached_input_tokens or 0
         if cached and pricing.cached_input_usd_per_million is None:
-            return result  # A total estimate would require guessing the cache rate.
+            return result
         normal = max(result.input_tokens - cached, 0)
         result.estimated_model_cost_usd = float(
             (
