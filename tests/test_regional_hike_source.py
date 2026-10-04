@@ -7,7 +7,11 @@ import pytest
 from event_radar.collectors.regional_sources import CuratedHikeCatalogSource
 from event_radar.models.regional import SONOMA_COUNTY, ResearchScope, WeekendWindow
 from event_radar.services.hike_catalog import HikeCatalogRepository
-from event_radar.shared.collection import SourceRegistration, SourceRegistry, collect_registered_sources
+from event_radar.shared.collection import (
+    SourceRegistration,
+    SourceRegistry,
+    collect_registered_sources,
+)
 from event_radar.shared.hike_sources import HikeCatalogRegionalAdapter
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
