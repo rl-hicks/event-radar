@@ -8,6 +8,7 @@ from datetime import datetime
 from event_radar.collectors.base import EventCollector
 from event_radar.models.event import Event
 from event_radar.models.regional import (
+    Claim,
     ImportantUnknown,
     Location,
     Observation,
@@ -77,7 +78,7 @@ def event_to_regional_opportunity(
     occurrence_id = _stable_id("occurrence", source_id, record, event.start_time.isoformat())
     opportunity_id = _stable_id("event", source_id, record, event.start_time.isoformat())
 
-    claims: list[str] = ["existence", "location", "time"]
+    claims: list[Claim] = ["existence", "location", "time"]
     if event.description or event.categories:
         claims.append("description")
     price = _price(event, evidence_id)
