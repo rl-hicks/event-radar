@@ -58,6 +58,7 @@ _PUBLIC_SELECTORS = frozenset(
         "id",
         "listing_id",
         "occurrence_id",
+        "page_id",
         "post_id",
         "p",
         "slug",
