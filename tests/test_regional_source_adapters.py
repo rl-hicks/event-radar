@@ -9,7 +9,11 @@ from event_radar.collectors.regional_sources import (
     sonoma_county_tourism_adapter,
 )
 from event_radar.models.regional import ResearchScope, SONOMA_COUNTY, WeekendWindow
-from event_radar.shared.collection import SourceRegistration, SourceRegistry, collect_registered_sources
+from event_radar.shared.collection import (
+    SourceRegistration,
+    SourceRegistry,
+    collect_registered_sources,
+)
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
