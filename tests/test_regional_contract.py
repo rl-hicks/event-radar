@@ -171,7 +171,8 @@ def test_invalid_scope_rejected(field, value):
     data["scope"][field] = value
     with pytest.raises(ValidationError):
         validate(data)
-+
+
+
 def test_distinct_occurrence_alternatives_preserved_but_exact_duplicate_rejected():
     value = payload()
     event = value["opportunities"][0]
