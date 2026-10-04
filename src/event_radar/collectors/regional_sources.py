@@ -14,12 +14,14 @@ from event_radar.collectors.sonoma_county import (
     SonomaCountyCollector,
     SonomaCountyCollectorError,
 )
+from event_radar.services.hike_catalog import HikeCatalogError, HikeCatalogRepository
 from event_radar.shared.collection import (
     RegionalSourceDescriptor,
     SourceRegistration,
     SourceRegistry,
 )
 from event_radar.shared.event_sources import EventCollectorRegionalAdapter
+from event_radar.shared.hike_sources import HikeCatalogRegionalAdapter
 
 
 def sonoma_county_tourism_adapter(
@@ -72,6 +74,33 @@ def happening_sonoma_adapter(
     )
 
 
+class CuratedHikeCatalogSource:
+    descriptor = RegionalSourceDescriptor(
+        source_id="curated-sonoma-hikes",
+        source_class="outdoor_catalog",
+        mechanism="catalog",
+        coverage_description=(
+            "Curated hike catalog routes explicitly classified in Sonoma County."
+        ),
+        opportunity_kinds=("hike",),
+    )
+
+    def __init__(self, repository: HikeCatalogRepository | None = None) -> None:
+        self._repository = repository or HikeCatalogRepository()
+
+    async def collect(self, scope, *, observed_at):
+        try:
+            catalog = self._repository.load()
+        except HikeCatalogError as exc:
+            from event_radar.shared.collection import RegionalSourceFailure
+
+            raise RegionalSourceFailure("invalid_response") from exc
+        return await HikeCatalogRegionalAdapter(
+            descriptor=self.descriptor,
+            catalog=catalog,
+        ).collect(scope, observed_at=observed_at)
+
+
 def default_sonoma_source_registry(
     *,
     user_agent: str,
@@ -92,5 +121,6 @@ def default_sonoma_source_registry(
                     timeout_seconds=timeout_seconds,
                 )
             ),
+            SourceRegistration(CuratedHikeCatalogSource()),
         )
     )
