@@ -172,9 +172,7 @@ def _merge_price(first: Price, second: Price) -> Price:
                 maximum=quote.maximum,
                 currency=quote.currency,
                 details=quote.details,
-                evidence_ids=tuple(
-                    sorted({eid for item in values for eid in item.evidence_ids})
-                ),
+                evidence_ids=tuple(sorted({eid for item in values for eid in item.evidence_ids})),
             )
         )
     return Price(
