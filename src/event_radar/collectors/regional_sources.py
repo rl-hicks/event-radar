@@ -4,6 +4,8 @@ Source-specific construction belongs here; shared orchestration consumes only th
 RegionalSourceAdapter contract and never branches on these source names.
 """
 
+from datetime import datetime
+
 import httpx
 
 from event_radar.collectors.happening_sonoma import (
@@ -14,9 +16,12 @@ from event_radar.collectors.sonoma_county import (
     SonomaCountyCollector,
     SonomaCountyCollectorError,
 )
+from event_radar.models.regional import ResearchScope
 from event_radar.services.hike_catalog import HikeCatalogError, HikeCatalogRepository
 from event_radar.shared.collection import (
     RegionalSourceDescriptor,
+    RegionalSourceFailure,
+    RegionalSourceResult,
     SourceRegistration,
     SourceRegistry,
 )
@@ -88,12 +93,15 @@ class CuratedHikeCatalogSource:
     def __init__(self, repository: HikeCatalogRepository | None = None) -> None:
         self._repository = repository or HikeCatalogRepository()
 
-    async def collect(self, scope, *, observed_at):
+    async def collect(
+        self,
+        scope: ResearchScope,
+        *,
+        observed_at: datetime,
+    ) -> RegionalSourceResult:
         try:
             catalog = self._repository.load()
         except HikeCatalogError as exc:
-            from event_radar.shared.collection import RegionalSourceFailure
-
             raise RegionalSourceFailure("invalid_response") from exc
         return await HikeCatalogRegionalAdapter(
             descriptor=self.descriptor,
