@@ -415,7 +415,8 @@ SourceState = Literal["success", "partial", "failed", "not_attempted"]
 
 class SourceCoverage(Contract):
     source_id: Identifier
-    channel: Literal["fixed_feed", "complementary_discovery", "hike_catalog", "weather"]+    scope: Text
+    channel: Literal["fixed_feed", "complementary_discovery", "hike_catalog", "weather"]
+    scope: Text
     status: SourceState
     observed_at: AwareDatetime | None
     result_count: Count | None
