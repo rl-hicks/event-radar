@@ -50,10 +50,9 @@ def begin_regional_research_run(
     identifier = run_id or uuid4()
     existing = session.get(RegionalResearchRun, identifier)
     if existing is not None:
-        if (
-            existing.universe_id != identity.id
-            or existing.requested_as_of.astimezone(UTC) != scope.as_of.astimezone(UTC)
-        ):
+        if existing.universe_id != identity.id or existing.requested_as_of.astimezone(
+            UTC
+        ) != scope.as_of.astimezone(UTC):
             raise ValueError("Existing regional run ID belongs to different research inputs.")
         return existing
 
@@ -261,12 +260,7 @@ def _diagnostics_payload(
 ) -> dict[str, object] | None:
     if not diagnostics:
         return None
-    return {
-        "stages": [
-            item.model_dump(mode="json", exclude_none=False)
-            for item in diagnostics
-        ]
-    }
+    return {"stages": [item.model_dump(mode="json", exclude_none=False) for item in diagnostics]}
 
 
 def _aware_now(value: datetime | None) -> datetime:
