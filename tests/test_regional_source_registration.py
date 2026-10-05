@@ -20,4 +20,5 @@ def test_initial_sonoma_sources_register_through_shared_adapter_contract() -> No
     ) == (
         "sonoma-county-tourism",
         "happening-sonoma-county",
+        "curated-sonoma-hikes",
     )
