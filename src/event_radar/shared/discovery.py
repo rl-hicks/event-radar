@@ -46,6 +46,7 @@ from event_radar.models.token_usage import TokenUsage, aggregate_token_usage
 from event_radar.shared.collection import RegionalCollectionBatch, SourceCoverageAssessment
 from event_radar.shared.deduplication import deduplicate_regional_opportunities
 
+
 @dataclass(frozen=True, slots=True)
 class DiscoveryProviderResponse[T]:
     value: T
