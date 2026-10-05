@@ -28,7 +28,12 @@ class SemanticProviderResponse:
 class RegionalSemanticProvider(Protocol):
     model_id: str
 
-    async def analyze(self, request: RegionalAnalysisRequest) -> SemanticProviderResponse: ...
+    async def analyze(
+        self,
+        request: RegionalAnalysisRequest,
+        *,
+        correction: str | None = None,
+    ) -> SemanticProviderResponse: ...
 
 
 class SemanticProviderFailure(RuntimeError):
@@ -108,20 +113,48 @@ async def enrich_regional_semantics(
             scope=scope,
             opportunities=tuple(_analysis_input(item) for item in originals),
         )
-        try:
-            response = await provider.analyze(request)
-        except SemanticProviderFailure as exc:
-            attempts += exc.attempts
-            latency_seconds += exc.latency_seconds or 0.0
-            usages.append(exc.usage)
-            failure_codes.append(exc.failure_code)
+        response: SemanticProviderResponse | None = None
+        reference_error = False
+        for validation_attempt in range(2):
+            correction = (
+                None
+                if validation_attempt == 0
+                else (
+                    "Return every supplied opportunity_id exactly once. "
+                    "Use only evidence_ids belonging to that opportunity, and only "
+                    "description-supporting evidence for semantic descriptors."
+                )
+            )
+            try:
+                candidate = await provider.analyze(request, correction=correction)
+            except SemanticProviderFailure as exc:
+                attempts += exc.attempts
+                latency_seconds += exc.latency_seconds or 0.0
+                usages.append(exc.usage)
+                failure_codes.append(exc.failure_code)
+                break
+
+            attempts += candidate.attempts
+            latency_seconds += candidate.latency_seconds or 0.0
+            usages.append(candidate.usage)
+            try:
+                validate_semantic_analysis(request, candidate.analysis)
+            except SemanticReferenceError:
+                reference_error = True
+                if validation_attempt == 0:
+                    continue
+                failure_codes.append("invalid_response")
+                break
+            response = candidate
+            reference_error = False
+            break
+
+        if response is None:
+            if reference_error and not failure_codes:
+                failure_codes.append("invalid_response")
             fallback_ids.extend(item.opportunity_id for item in originals)
             continue
 
-        attempts += response.attempts
-        latency_seconds += response.latency_seconds or 0.0
-        usages.append(response.usage)
-        validate_semantic_analysis(request, response.analysis)
         enriched.update(_apply_analysis(originals, response.analysis))
         successful_batches += 1
 
