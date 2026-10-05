@@ -87,7 +87,7 @@ async def enrich_regional_semantics(
                 latency_seconds=0.0,
                 usages=(),
                 failure_code=None,
-                usage_complete=True,
+                usage_complete=False,
             ),
             fallback_opportunity_ids=(),
         )
