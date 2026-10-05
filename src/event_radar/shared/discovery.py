@@ -258,7 +258,12 @@ async def run_adaptive_discovery(
                 provider_failure_seen = wave_provider_failure = True
                 continue
             tracker.consume_response(researched)
-            _validate_research_result(task, researched.value)
+            try:
+                _validate_research_result(task, researched.value)
+            except ValueError:
+                tracker.failure_codes.append("invalid_response")
+                provider_failure_seen = wave_provider_failure = True
+                continue
             wave_candidates.extend(researched.value.candidates)
             for lead in researched.value.source_leads:
                 source_leads.setdefault(str(lead.url), lead)
@@ -284,7 +289,13 @@ async def run_adaptive_discovery(
                 verified = None
             if verified is not None:
                 tracker.consume_response(verified)
-                _validate_verification(unique_candidates, verified.value)
+                try:
+                    _validate_verification(unique_candidates, verified.value)
+                except ValueError:
+                    tracker.failure_codes.append("invalid_response")
+                    provider_failure_seen = wave_provider_failure = True
+                    verified = None
+            if verified is not None:
                 verified_candidates.extend(
                     decision.candidate
                     for decision in verified.value.decisions
