@@ -12,22 +12,40 @@ from event_radar.models.regional import (
     ResearchScope,
     SourceCoverage,
 )
+from event_radar.models.regional_semantics import (
+    OpportunitySemanticAnalysis,
+    RegionalSemanticAnalysis,
+)
 from event_radar.models.token_usage import (
     ModelTokenPricing,
     TokenUsage,
     aggregate_token_usage,
     parse_token_usage,
 )
+from event_radar.shared.semantic_analysis import (
+    SemanticEnrichmentOutcome,
+    SemanticProviderFailure,
+    SemanticProviderResponse,
+    enrich_regional_semantics,
+    validate_semantic_analysis,
+)
 
 __all__ = [
     "ModelTokenPricing",
+    "OpportunitySemanticAnalysis",
     "RegionalAnalysisRequest",
+    "RegionalSemanticAnalysis",
     "RegionalDiscoveryRequest",
     "RegionalWeekendUniverse",
     "ResearchIdentity",
     "ResearchScope",
+    "SemanticEnrichmentOutcome",
+    "SemanticProviderFailure",
+    "SemanticProviderResponse",
     "SourceCoverage",
     "TokenUsage",
     "aggregate_token_usage",
+    "enrich_regional_semantics",
     "parse_token_usage",
+    "validate_semantic_analysis",
 ]
