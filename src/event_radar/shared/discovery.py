@@ -155,9 +155,7 @@ class _BudgetTracker:
         self.latency_seconds += response.latency_seconds or 0.0
         self.usages.append(response.usage)
         if response.usage.estimated_model_cost_usd is not None:
-            self.estimated_model_cost_usd += Decimal(
-                str(response.usage.estimated_model_cost_usd)
-            )
+            self.estimated_model_cost_usd += Decimal(str(response.usage.estimated_model_cost_usd))
         else:
             self.model_cost_complete = False
 
@@ -172,9 +170,7 @@ class _BudgetTracker:
         self.usages.append(failure.usage)
         self.failure_codes.append(failure.failure_code)
         if failure.usage.estimated_model_cost_usd is not None:
-            self.estimated_model_cost_usd += Decimal(
-                str(failure.usage.estimated_model_cost_usd)
-            )
+            self.estimated_model_cost_usd += Decimal(str(failure.usage.estimated_model_cost_usd))
         else:
             self.model_cost_complete = False
 
@@ -344,9 +340,7 @@ async def run_adaptive_discovery(
     else:
         stop_reason = "max_waves"
 
-    new_opportunities = tuple(
-        item for item in current if item.opportunity_id not in initial_ids
-    )
+    new_opportunities = tuple(item for item in current if item.opportunity_id not in initial_ids)
     usage = aggregate_token_usage(tracker.usages)
     status: Literal["success", "partial", "fallback"] = (
         "fallback"
@@ -365,9 +359,7 @@ async def run_adaptive_discovery(
     failure_code = tracker.failure_codes[0] if tracker.failure_codes else None
     models = {planner.model_id, researcher.model_id, verifier.model_id}
     model_id = next(iter(models)) if len(models) == 1 else None
-    usage_complete = bool(tracker.usages) and all(
-        _usage_complete(item) for item in tracker.usages
-    )
+    usage_complete = bool(tracker.usages) and all(_usage_complete(item) for item in tracker.usages)
 
     return AdaptiveDiscoveryOutcome(
         opportunities=current,
@@ -500,12 +492,8 @@ def materialize_discovered_event(
     if not time_ids:
         raise ValueError("Verified discovery time is not directly supported by evidence.")
 
-    location_ids = tuple(
-        item.evidence_id for item in evidence if "location" in item.claims
-    )
-    description_ids = tuple(
-        item.evidence_id for item in evidence if "description" in item.claims
-    )
+    location_ids = tuple(item.evidence_id for item in evidence if "location" in item.claims)
+    description_ids = tuple(item.evidence_id for item in evidence if "description" in item.claims)
     for quote in candidate.price.quotes:
         if any(
             evidence_id not in registry or "price" not in registry[evidence_id].claims
