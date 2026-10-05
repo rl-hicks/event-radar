@@ -77,9 +77,7 @@ class FakeSemanticProvider:
             )
         results: list[OpportunitySemanticAnalysis] = []
         for opportunity in request.opportunities:
-            evidence = next(
-                item for item in opportunity.evidence if "description" in item.claims
-            )
+            evidence = next(item for item in opportunity.evidence if "description" in item.claims)
             results.append(
                 OpportunitySemanticAnalysis(
                     opportunity_id=opportunity.opportunity_id,
@@ -128,13 +126,8 @@ async def test_semantic_enrichment_changes_only_semantics_and_semantic_unknown()
         assert after.semantics is not None
         assert len(after.semantics) == 1
         assert all(item.kind != "semantic_analysis" for item in after.unknowns)
-        assert {
-            (item.kind, item.detail)
-            for item in after.unknowns
-        } == {
-            (item.kind, item.detail)
-            for item in before.unknowns
-            if item.kind != "semantic_analysis"
+        assert {(item.kind, item.detail) for item in after.unknowns} == {
+            (item.kind, item.detail) for item in before.unknowns if item.kind != "semantic_analysis"
         }
 
 
