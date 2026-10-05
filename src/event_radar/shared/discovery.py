@@ -7,7 +7,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Generic, Literal, Protocol, TypeVar
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import StrictBool
@@ -46,11 +46,8 @@ from event_radar.models.token_usage import TokenUsage, aggregate_token_usage
 from event_radar.shared.collection import RegionalCollectionBatch, SourceCoverageAssessment
 from event_radar.shared.deduplication import deduplicate_regional_opportunities
 
-T = TypeVar("T")
-
-
 @dataclass(frozen=True, slots=True)
-class DiscoveryProviderResponse(Generic[T]):
+class DiscoveryProviderResponse[T]:
     value: T
     usage: TokenUsage = field(default_factory=TokenUsage)
     tool_calls: int = 0
@@ -143,7 +140,7 @@ class _BudgetTracker:
             and self.estimated_model_cost_usd < self.budget.max_model_cost_usd
         )
 
-    def consume_response(self, response: DiscoveryProviderResponse[T]) -> None:
+    def consume_response[T](self, response: DiscoveryProviderResponse[T]) -> None:
         if response.tool_calls < 0 or response.attempts < 1:
             raise ValueError("Provider response accounting must be non-negative.")
         if response.attempts > self.budget.max_model_calls - self.model_calls:
