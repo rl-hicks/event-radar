@@ -14,6 +14,7 @@ from event_radar.shared.semantic_analysis import (
     SemanticProviderResponse,
     SemanticReferenceError,
     enrich_regional_semantics,
+    validate_semantic_analysis,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures/regional/universe.json"
@@ -47,7 +48,7 @@ class FakeSemanticProvider:
         self.fail_call = fail_call
         self.requests = []
 
-    async def analyze(self, request):
+    async def analyze(self, request, *, correction=None):
         self.requests.append(request)
         call = len(self.requests)
         if self.fail_call == call:
@@ -183,11 +184,11 @@ async def test_expected_provider_failure_preserves_failed_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_or_invented_opportunity_ids_fail_closed() -> None:
+async def test_missing_or_invented_opportunity_ids_retry_then_fall_back() -> None:
     universe = fixture_universe()
 
     class BadProvider(FakeSemanticProvider):
-        async def analyze(self, request):
+        async def analyze(self, request, *, correction=None):
             self.requests.append(request)
             return SemanticProviderResponse(
                 analysis=RegionalSemanticAnalysis(
@@ -200,12 +201,40 @@ async def test_missing_or_invented_opportunity_ids_fail_closed() -> None:
                 )
             )
 
-    with pytest.raises(SemanticReferenceError, match="every supplied"):
-        await enrich_regional_semantics(
-            universe.scope,
-            universe.opportunities,
-            BadProvider(),
+    provider = BadProvider()
+    outcome = await enrich_regional_semantics(
+        universe.scope,
+        universe.opportunities,
+        provider,
+    )
+
+    assert len(provider.requests) == 2
+    assert outcome.diagnostics.status == "fallback"
+    assert outcome.diagnostics.failure_code == "invalid_response"
+    assert outcome.fallback_opportunity_ids == tuple(
+        item.opportunity_id for item in universe.opportunities
+    )
+    assert outcome.opportunities == universe.opportunities
+
+
+def test_reference_validator_rejects_invented_opportunity_id() -> None:
+    universe = fixture_universe()
+    from event_radar.models.regional import RegionalAnalysisRequest
+
+    provider_request = RegionalAnalysisRequest(
+        scope=universe.scope,
+        opportunities=universe.opportunities,
+    )
+    analysis = RegionalSemanticAnalysis(
+        opportunities=(
+            OpportunitySemanticAnalysis(
+                opportunity_id="invented-opportunity",
+                descriptors=(),
+            ),
         )
+    )
+    with pytest.raises(SemanticReferenceError, match="every supplied"):
+        validate_semantic_analysis(provider_request, analysis)
 
 
 @pytest.mark.asyncio
@@ -213,7 +242,7 @@ async def test_descriptor_requires_description_evidence_from_same_opportunity() 
     universe = fixture_universe()
 
     class BadEvidenceProvider(FakeSemanticProvider):
-        async def analyze(self, request):
+        async def analyze(self, request, *, correction=None):
             self.requests.append(request)
             return SemanticProviderResponse(
                 analysis=RegionalSemanticAnalysis(
@@ -238,12 +267,17 @@ async def test_descriptor_requires_description_evidence_from_same_opportunity() 
                 )
             )
 
-    with pytest.raises(SemanticReferenceError, match="description-supporting"):
-        await enrich_regional_semantics(
-            universe.scope,
-            universe.opportunities,
-            BadEvidenceProvider(),
-        )
+    provider = BadEvidenceProvider()
+    outcome = await enrich_regional_semantics(
+        universe.scope,
+        universe.opportunities,
+        provider,
+    )
+
+    assert len(provider.requests) == 2
+    assert outcome.diagnostics.status == "fallback"
+    assert outcome.diagnostics.failure_code == "invalid_response"
+    assert outcome.opportunities == universe.opportunities
 
 
 @pytest.mark.asyncio
