@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Protocol
+from typing import Literal, Protocol
 
 from event_radar.models.regional import (
     FailureCode,
@@ -20,7 +20,7 @@ from event_radar.models.token_usage import TokenUsage, aggregate_token_usage
 @dataclass(frozen=True, slots=True)
 class SemanticProviderResponse:
     analysis: RegionalSemanticAnalysis
-    usage: TokenUsage = TokenUsage()
+    usage: TokenUsage = field(default_factory=TokenUsage)
     attempts: int = 1
     latency_seconds: float | None = None
 
@@ -223,7 +223,7 @@ def _usage_complete(usage: TokenUsage) -> bool:
 def _diagnostics(
     *,
     model_id: str,
-    status: str,
+    status: Literal["success", "partial", "fallback", "failed", "skipped"],
     attempts: int,
     input_count: int,
     result_count: int,
