@@ -13,6 +13,7 @@ from typing import Literal
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from pydantic import ValidationError
 
+from event_radar.models.regional import FailureCode
 from event_radar.models.regional_discovery import (
     DiscoveredEventCandidate,
     DiscoveryContext,
@@ -219,7 +220,7 @@ class OpenAIAdaptiveDiscoveryProvider:
         started: float,
     ) -> DiscoveryProviderFailure:
         if isinstance(exc, APITimeoutError):
-            code = "timeout"
+            code: FailureCode = "timeout"
         elif isinstance(exc, APIConnectionError):
             code = "unavailable"
         elif isinstance(exc, APIStatusError):
