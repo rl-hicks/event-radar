@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from event_radar.models.regional import ImportantUnknown, RegionalWeekendUniverse
+from event_radar.models.regional import (
+    ImportantUnknown,
+    RegionalAnalysisRequest,
+    RegionalOpportunity,
+    RegionalWeekendUniverse,
+    ResearchScope,
+)
 from event_radar.models.regional_semantics import (
     OpportunitySemanticAnalysis,
     RegionalSemanticAnalysis,
@@ -25,7 +31,7 @@ def fixture_universe() -> RegionalWeekendUniverse:
     return RegionalWeekendUniverse.model_validate_json(FIXTURE.read_text())
 
 
-def with_semantic_unknowns():
+def with_semantic_unknowns() -> tuple[ResearchScope, tuple[RegionalOpportunity, ...]]:
     universe = fixture_universe()
     enriched = []
     for opportunity in universe.opportunities:
@@ -46,9 +52,14 @@ class FakeSemanticProvider:
 
     def __init__(self, *, fail_call: int | None = None) -> None:
         self.fail_call = fail_call
-        self.requests = []
+        self.requests: list[RegionalAnalysisRequest] = []
 
-    async def analyze(self, request, *, correction=None):
+    async def analyze(
+        self,
+        request: RegionalAnalysisRequest,
+        *,
+        correction: str | None = None,
+    ) -> SemanticProviderResponse:
         self.requests.append(request)
         call = len(self.requests)
         if self.fail_call == call:
@@ -64,7 +75,7 @@ class FakeSemanticProvider:
                     estimated_model_cost_usd=0.001,
                 ),
             )
-        results = []
+        results: list[OpportunitySemanticAnalysis] = []
         for opportunity in request.opportunities:
             evidence = next(
                 item for item in opportunity.evidence if "description" in item.claims
@@ -188,7 +199,12 @@ async def test_missing_or_invented_opportunity_ids_retry_then_fall_back() -> Non
     universe = fixture_universe()
 
     class BadProvider(FakeSemanticProvider):
-        async def analyze(self, request, *, correction=None):
+        async def analyze(
+            self,
+            request: RegionalAnalysisRequest,
+            *,
+            correction: str | None = None,
+        ) -> SemanticProviderResponse:
             self.requests.append(request)
             return SemanticProviderResponse(
                 analysis=RegionalSemanticAnalysis(
@@ -219,8 +235,6 @@ async def test_missing_or_invented_opportunity_ids_retry_then_fall_back() -> Non
 
 def test_reference_validator_rejects_invented_opportunity_id() -> None:
     universe = fixture_universe()
-    from event_radar.models.regional import RegionalAnalysisRequest
-
     provider_request = RegionalAnalysisRequest(
         scope=universe.scope,
         opportunities=universe.opportunities,
@@ -242,7 +256,12 @@ async def test_descriptor_requires_description_evidence_from_same_opportunity() 
     universe = fixture_universe()
 
     class BadEvidenceProvider(FakeSemanticProvider):
-        async def analyze(self, request, *, correction=None):
+        async def analyze(
+            self,
+            request: RegionalAnalysisRequest,
+            *,
+            correction: str | None = None,
+        ) -> SemanticProviderResponse:
             self.requests.append(request)
             return SemanticProviderResponse(
                 analysis=RegionalSemanticAnalysis(
