@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     String,
     UniqueConstraint,
     text,
@@ -81,6 +82,11 @@ class RegionalUniverseSnapshot(Base):
             "content_hash",
             name="uq_regional_snapshot_content",
         ),
+        Index(
+            "ix_regional_snapshots_universe_created",
+            "universe_id",
+            "created_at",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
@@ -118,6 +124,11 @@ class RegionalResearchRun(Base):
             "AND failure_code IS NOT NULL)"
             ")",
             name="ck_regional_run_state_shape",
+        ),
+        Index(
+            "ix_regional_runs_universe_started",
+            "universe_id",
+            "started_at",
         ),
     )
 
