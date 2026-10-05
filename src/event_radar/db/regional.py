@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -203,10 +203,11 @@ def read_current_regional_universe(
     quality = snapshot.quality_status
     if quality not in ("success", "partial"):
         raise RuntimeError("Stored regional snapshot has an invalid quality status.")
+    typed_quality = cast(SnapshotQuality, quality)
     return PersistedUniverse(
         universe_id=record.id,
         snapshot_id=snapshot.id,
-        quality_status=quality,
+        quality_status=typed_quality,
         content_hash=snapshot.content_hash,
         universe=parsed,
         discovery_summary=snapshot.discovery_summary,
