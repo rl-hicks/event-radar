@@ -8,7 +8,7 @@ from time import monotonic
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from pydantic import ValidationError
 
-from event_radar.models.regional import RegionalAnalysisRequest
+from event_radar.models.regional import FailureCode, RegionalAnalysisRequest
 from event_radar.models.regional_semantics import RegionalSemanticAnalysis
 from event_radar.models.token_usage import ModelTokenPricing, parse_token_usage
 from event_radar.shared.semantic_analysis import (
@@ -82,7 +82,7 @@ class OpenAIRegionalSemanticProvider:
                 latency_seconds=monotonic() - started,
             ) from exc
         except APIStatusError as exc:
-            code = (
+            code: FailureCode = (
                 "rate_limited"
                 if exc.status_code == 429
                 else "unavailable"
