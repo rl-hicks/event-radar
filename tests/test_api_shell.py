@@ -51,7 +51,12 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
         import event_radar.db.config
         from fastapi.testclient import TestClient
 
-        assert set(Base.metadata.tables) == {"app_users"}
+        assert set(Base.metadata.tables) == {
+            "app_users",
+            "regional_universes",
+            "regional_universe_snapshots",
+            "regional_research_runs",
+        }
         app = create_app()
         assert app.state.database._engine is None
         with TestClient(app) as client:
