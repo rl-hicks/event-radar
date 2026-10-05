@@ -14,6 +14,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from pydantic import ValidationError
 
 from event_radar.models.regional_discovery import (
+    DiscoveredEventCandidate,
     DiscoveryContext,
     DiscoveryPlan,
     DiscoveryResearchRequest,
@@ -21,7 +22,6 @@ from event_radar.models.regional_discovery import (
     DiscoveryTask,
     DiscoveryVerificationRequest,
     DiscoveryVerificationResult,
-    DiscoveredEventCandidate,
 )
 from event_radar.models.token_usage import ModelTokenPricing, parse_token_usage
 from event_radar.shared.discovery import (
