@@ -22,8 +22,18 @@ def upgrade() -> None:
         sa.Column("region_id", sa.String(length=120), nullable=False),
         sa.Column("weekend_friday", sa.Date(), nullable=False),
         sa.Column("research_policy_version", sa.String(length=120), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "region_id",
@@ -43,7 +53,12 @@ def upgrade() -> None:
         sa.Column("content_hash", sa.String(length=64), nullable=False),
         sa.Column("universe_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("discovery_summary", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "quality_status IN ('success', 'partial')",
             name="ck_regional_snapshot_quality_status",
@@ -85,7 +100,12 @@ def upgrade() -> None:
         sa.Column("universe_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("requested_as_of", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("started_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "started_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("snapshot_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("failure_code", sa.String(length=64), nullable=True),
