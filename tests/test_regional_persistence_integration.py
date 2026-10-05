@@ -25,9 +25,9 @@ from event_radar.db.regional import (
 )
 from event_radar.db.session import build_session_factory, session_scope
 from event_radar.models.regional import (
+    SONOMA_COUNTY,
     RegionalWeekendUniverse,
     ResearchScope,
-    SONOMA_COUNTY,
     WeekendWindow,
 )
 from event_radar.models.regional_discovery import (
