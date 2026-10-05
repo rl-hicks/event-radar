@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -162,7 +163,7 @@ async def test_semantic_batches_aggregate_usage_and_attempts() -> None:
     assert outcome.diagnostics.cached_input_tokens == 4
     assert outcome.diagnostics.output_tokens == 10
     assert outcome.diagnostics.total_tokens == 30
-    assert outcome.diagnostics.estimated_model_cost_usd == 0.004
+    assert outcome.diagnostics.estimated_model_cost_usd == Decimal("0.004")
     assert outcome.diagnostics.usage_complete is True
 
 
