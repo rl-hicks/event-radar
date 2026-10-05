@@ -246,6 +246,7 @@ async def run_adaptive_discovery(
         wave_candidates: list[DiscoveredEventCandidate] = []
         planned_task_ids: list[str] = []
         wave_provider_failure = False
+        source_leads_before = len(source_leads)
 
         for task in plan.tasks:
             if not tracker.can_model_call() or tracker.remaining_web_search_calls <= 0:
@@ -312,12 +313,12 @@ async def run_adaptive_discovery(
                 tracker.failure_codes.append("invalid_response")
 
         verified_total += len(materialized)
+        before_ids = {item.opportunity_id for item in current}
         deduplicated = deduplicate_regional_opportunities(
             (*current, *materialized),
-            preferred_opportunity_ids=frozenset(before.opportunity_id for before in current),
+            preferred_opportunity_ids=frozenset(before_ids),
         )
         exclusions.extend(deduplicated.exclusions)
-        before_ids = {item.opportunity_id for item in current}
         current = deduplicated.opportunities
         incremental = sum(item.opportunity_id not in before_ids for item in current)
         wave_records.append(
@@ -327,7 +328,7 @@ async def run_adaptive_discovery(
                 verified_candidate_count=len(materialized),
                 incremental_opportunity_count=incremental,
                 duplicate_count=deduplicated.duplicates_removed,
-                source_lead_count=len(source_leads),
+                source_lead_count=len(source_leads) - source_leads_before,
             )
         )
 
