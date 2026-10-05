@@ -1,6 +1,6 @@
 """User-neutral contracts for adaptive regional discovery and verification."""
 
-from datetime import date, datetime
+from datetime import UTC, date
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -43,6 +43,14 @@ GapDimension = Literal[
     "general",
 ]
 GapPriority = Literal["high", "moderate", "low"]
+DiscoveryStopReason = Literal[
+    "planner_stopped",
+    "no_tasks",
+    "no_incremental_candidates",
+    "budget_exhausted",
+    "provider_failure",
+    "max_waves",
+]
 VerificationRejection = Literal[
     "outside_region",
     "outside_window",
@@ -137,7 +145,11 @@ class DiscoveryEvidenceDraft(DiscoveryContract):
         if has_time != (self.occurrence_start is not None):
             raise ValueError("Time evidence requires an extracted occurrence start.")
         if self.occurrence_end is not None:
-            if self.occurrence_start is None or self.occurrence_end <= self.occurrence_start:
+            if (
+                self.occurrence_start is None
+                or self.occurrence_end.astimezone(UTC)
+                <= self.occurrence_start.astimezone(UTC)
+            ):
                 raise ValueError("Discovery evidence end must follow its start.")
         return self
 
@@ -157,7 +169,7 @@ class DiscoveredEventCandidate(DiscoveryContract):
 
     @model_validator(mode="after")
     def validate_candidate(self) -> "DiscoveredEventCandidate":
-        if self.end is not None and self.end <= self.start:
+        if self.end is not None and self.end.astimezone(UTC) <= self.start.astimezone(UTC):
             raise ValueError("Discovered event end must follow start.")
         evidence_ids = tuple(item.evidence_id for item in self.evidence)
         if len(evidence_ids) != len(set(evidence_ids)):
@@ -222,6 +234,7 @@ class DiscoveryBudgetUsage(DiscoveryContract):
     model_calls: Count
     web_search_calls: Count
     estimated_model_cost_usd: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    model_cost_complete: StrictBool
 
 
 class DiscoveryWaveRecord(DiscoveryContract):
@@ -234,14 +247,7 @@ class DiscoveryWaveRecord(DiscoveryContract):
 
 
 class AdaptiveDiscoverySummary(DiscoveryContract):
-    stop_reason: Literal[
-        "planner_stopped",
-        "no_tasks",
-        "no_incremental_candidates",
-        "budget_exhausted",
-        "provider_failure",
-        "max_waves",
-    ]
+    stop_reason: DiscoveryStopReason
     budget: DiscoveryBudget
     usage: DiscoveryBudgetUsage
     waves: tuple[DiscoveryWaveRecord, ...]
