@@ -97,9 +97,7 @@ async def enrich_regional_semantics(
             fallback_opportunity_ids=(),
         )
 
-    enriched: dict[str, RegionalOpportunity] = {
-        item.opportunity_id: item for item in opportunities
-    }
+    enriched: dict[str, RegionalOpportunity] = {item.opportunity_id: item for item in opportunities}
     fallback_ids: list[str] = []
     usages: list[TokenUsage] = []
     attempts = 0
@@ -161,11 +159,7 @@ async def enrich_regional_semantics(
     batch_count = (len(opportunities) + batch_size - 1) // batch_size
     failed_batches = batch_count - successful_batches
     status = (
-        "success"
-        if failed_batches == 0
-        else "partial"
-        if successful_batches > 0
-        else "fallback"
+        "success" if failed_batches == 0 else "partial" if successful_batches > 0 else "fallback"
     )
     complete_usage = all(_usage_complete(item) for item in usages) and len(usages) == batch_count
     return SemanticEnrichmentOutcome(
