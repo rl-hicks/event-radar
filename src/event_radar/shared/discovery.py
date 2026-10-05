@@ -7,17 +7,19 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Literal, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
+from pydantic import StrictBool
+
 from event_radar.models.regional import (
+    FactualExclusion,
     FailureCode,
     ImportantUnknown,
     Location,
     Observation,
     Occurrence,
     OperationalDiagnostics,
-    Price,
     RegionalDiscoveryRequest,
     RegionalOpportunity,
     ResearchScope,
@@ -26,7 +28,6 @@ from event_radar.models.regional import (
 )
 from event_radar.models.regional_discovery import (
     AdaptiveDiscoverySummary,
-    CandidateVerification,
     CoverageCount,
     DiscoveredEventCandidate,
     DiscoveryBudget,
@@ -34,6 +35,7 @@ from event_radar.models.regional_discovery import (
     DiscoveryContext,
     DiscoveryPlan,
     DiscoveryResearchResult,
+    DiscoveryStopReason,
     DiscoveryTask,
     DiscoveryVerificationResult,
     DiscoveryWaveRecord,
@@ -113,7 +115,7 @@ class DiscoveryVerifier(Protocol):
 class AdaptiveDiscoveryOutcome:
     opportunities: tuple[RegionalOpportunity, ...]
     new_opportunities: tuple[RegionalOpportunity, ...]
-    exclusions: tuple
+    exclusions: tuple[FactualExclusion, ...]
     source_coverage: SourceCoverage
     diagnostics: OperationalDiagnostics
     summary: AdaptiveDiscoverySummary
@@ -129,6 +131,7 @@ class _BudgetTracker:
     usages: list[TokenUsage] = field(default_factory=list)
     latency_seconds: float = 0.0
     failure_codes: list[FailureCode] = field(default_factory=list)
+    model_cost_complete: bool = True
 
     @property
     def remaining_web_search_calls(self) -> int:
@@ -140,9 +143,11 @@ class _BudgetTracker:
             and self.estimated_model_cost_usd < self.budget.max_model_cost_usd
         )
 
-    def consume_response(self, response: DiscoveryProviderResponse[object]) -> None:
+    def consume_response(self, response: DiscoveryProviderResponse[T]) -> None:
         if response.tool_calls < 0 or response.attempts < 1:
             raise ValueError("Provider response accounting must be non-negative.")
+        if response.attempts > self.budget.max_model_calls - self.model_calls:
+            raise ValueError("Provider exceeded the supplied model-call budget.")
         if response.tool_calls > self.remaining_web_search_calls:
             raise ValueError("Provider exceeded the supplied web-search budget.")
         self.model_calls += response.attempts
@@ -153,8 +158,12 @@ class _BudgetTracker:
             self.estimated_model_cost_usd += Decimal(
                 str(response.usage.estimated_model_cost_usd)
             )
+        else:
+            self.model_cost_complete = False
 
     def consume_failure(self, failure: DiscoveryProviderFailure) -> None:
+        if failure.attempts > self.budget.max_model_calls - self.model_calls:
+            raise ValueError("Provider failure exceeded the supplied model-call budget.")
         if failure.tool_calls > self.remaining_web_search_calls:
             raise ValueError("Provider failure exceeded the supplied web-search budget.")
         self.model_calls += failure.attempts
@@ -166,6 +175,8 @@ class _BudgetTracker:
             self.estimated_model_cost_usd += Decimal(
                 str(failure.usage.estimated_model_cost_usd)
             )
+        else:
+            self.model_cost_complete = False
 
     def usage(self) -> DiscoveryBudgetUsage:
         return DiscoveryBudgetUsage(
@@ -173,6 +184,7 @@ class _BudgetTracker:
             model_calls=self.model_calls,
             web_search_calls=self.web_search_calls,
             estimated_model_cost_usd=self.estimated_model_cost_usd,
+            model_cost_complete=self.model_cost_complete,
         )
 
 
@@ -201,7 +213,7 @@ async def run_adaptive_discovery(
     tracker = _BudgetTracker(budget)
     verified_total = 0
     provider_failure_seen = False
-    stop_reason = "max_waves"
+    stop_reason: DiscoveryStopReason = "max_waves"
 
     for wave in range(1, budget.max_waves + 1):
         if not tracker.can_model_call():
@@ -300,7 +312,10 @@ async def run_adaptive_discovery(
                 tracker.failure_codes.append("invalid_response")
 
         verified_total += len(materialized)
-        deduplicated = deduplicate_regional_opportunities((*current, *materialized))
+        deduplicated = deduplicate_regional_opportunities(
+            (*current, *materialized),
+            preferred_opportunity_ids=frozenset(before.opportunity_id for before in current),
+        )
         exclusions.extend(deduplicated.exclusions)
         before_ids = {item.opportunity_id for item in current}
         current = deduplicated.opportunities
@@ -332,13 +347,19 @@ async def run_adaptive_discovery(
         item for item in current if item.opportunity_id not in initial_ids
     )
     usage = aggregate_token_usage(tracker.usages)
-    status = (
-        "partial"
+    status: Literal["success", "partial", "fallback"] = (
+        "fallback"
+        if provider_failure_seen and not new_opportunities
+        else "partial"
         if provider_failure_seen
         else "success"
     )
-    coverage_status = "partial" if provider_failure_seen and verified_total > 0 else (
-        "failed" if provider_failure_seen and verified_total == 0 else "success"
+    coverage_status: Literal["success", "partial", "failed"] = (
+        "partial"
+        if provider_failure_seen and verified_total > 0
+        else "failed"
+        if provider_failure_seen
+        else "success"
     )
     failure_code = tracker.failure_codes[0] if tracker.failure_codes else None
     models = {planner.model_id, researcher.model_id, verifier.model_id}
@@ -544,7 +565,7 @@ def materialize_discovered_event(
                 location=location,
                 evidence_ids=time_ids,
                 price=candidate.price,
-                available=Observation[bool](
+                available=Observation[StrictBool](
                     state="unknown",
                     value=None,
                     evidence_ids=(),
@@ -552,7 +573,7 @@ def materialize_discovered_event(
             ),
         ),
         route=None,
-        access_open=Observation[bool](
+        access_open=Observation[StrictBool](
             state="unknown",
             value=None,
             evidence_ids=(),
