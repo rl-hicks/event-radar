@@ -127,6 +127,11 @@ class DiscoveryPlan(DiscoveryContract):
         return self
 
 
+class DiscoveryResearchRequest(DiscoveryContract):
+    context: DiscoveryContext
+    task: DiscoveryTask
+
+
 class DiscoveryEvidenceDraft(DiscoveryContract):
     evidence_id: Identifier
     url: HttpUrl
@@ -188,6 +193,11 @@ class DiscoveryResearchResult(DiscoveryContract):
     task_id: Identifier
     candidates: tuple[DiscoveredEventCandidate, ...]
     source_leads: tuple[SourceLead, ...]
+
+
+class DiscoveryVerificationRequest(DiscoveryContract):
+    context: DiscoveryContext
+    candidates: tuple[DiscoveredEventCandidate, ...] = Field(min_length=1)
 
 
 class CandidateVerification(DiscoveryContract):
