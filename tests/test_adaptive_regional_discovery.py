@@ -307,10 +307,7 @@ async def test_adaptive_discovery_adds_new_event_merges_duplicate_and_stops_on_r
     assert len(outcome.new_opportunities) == 1
     assert outcome.new_opportunities[0].title == "Synthetic Sunday Gathering"
     assert outcome.new_opportunities[0].semantics is None
-    assert any(
-        item.kind == "semantic_analysis"
-        for item in outcome.new_opportunities[0].unknowns
-    )
+    assert any(item.kind == "semantic_analysis" for item in outcome.new_opportunities[0].unknowns)
 
     original = next(
         item for item in outcome.opportunities if item.opportunity_id == "community-workshop"
@@ -495,9 +492,7 @@ async def test_verified_discovery_can_flow_directly_into_wp4_semantics() -> None
         async def analyze(self, request, *, correction=None):
             opportunity = request.opportunities[0]
             evidence_id = next(
-                item.evidence_id
-                for item in opportunity.evidence
-                if "description" in item.claims
+                item.evidence_id for item in opportunity.evidence if "description" in item.claims
             )
             return SemanticProviderResponse(
                 analysis=RegionalSemanticAnalysis(
