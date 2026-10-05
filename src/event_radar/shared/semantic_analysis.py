@@ -158,7 +158,7 @@ async def enrich_regional_semantics(
 
     batch_count = (len(opportunities) + batch_size - 1) // batch_size
     failed_batches = batch_count - successful_batches
-    status = (
+    status: Literal["success", "partial", "fallback"] = (
         "success" if failed_batches == 0 else "partial" if successful_batches > 0 else "fallback"
     )
     complete_usage = all(_usage_complete(item) for item in usages) and len(usages) == batch_count
