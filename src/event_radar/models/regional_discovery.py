@@ -145,11 +145,9 @@ class DiscoveryEvidenceDraft(DiscoveryContract):
         if has_time != (self.occurrence_start is not None):
             raise ValueError("Time evidence requires an extracted occurrence start.")
         if self.occurrence_end is not None:
-            if (
-                self.occurrence_start is None
-                or self.occurrence_end.astimezone(UTC)
-                <= self.occurrence_start.astimezone(UTC)
-            ):
+            if self.occurrence_start is None or self.occurrence_end.astimezone(
+                UTC
+            ) <= self.occurrence_start.astimezone(UTC):
                 raise ValueError("Discovery evidence end must follow its start.")
         return self
 
