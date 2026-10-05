@@ -32,6 +32,8 @@ class RegionalDeduplicationResult:
 
 def deduplicate_regional_opportunities(
     opportunities: tuple[RegionalOpportunity, ...],
+    *,
+    preferred_opportunity_ids: frozenset[str] | None = None,
 ) -> RegionalDeduplicationResult:
     retained: list[RegionalOpportunity] = []
     exclusions: list[FactualExclusion] = []
@@ -51,7 +53,11 @@ def deduplicate_regional_opportunities(
             continue
 
         existing = retained[duplicate_index]
-        merged, dropped = _merge_pair(existing, candidate)
+        merged, dropped = _merge_pair(
+            existing,
+            candidate,
+            preferred_opportunity_ids=preferred_opportunity_ids,
+        )
         retained[duplicate_index] = merged
         removed += 1
         for evidence in dropped.evidence:
@@ -91,8 +97,16 @@ def _same_event_occurrence(first: RegionalOpportunity, second: RegionalOpportuni
 def _merge_pair(
     first: RegionalOpportunity,
     second: RegionalOpportunity,
+    *,
+    preferred_opportunity_ids: frozenset[str] | None,
 ) -> tuple[RegionalOpportunity, RegionalOpportunity]:
-    primary = sorted((first, second), key=_preference_key)[0]
+    preferred = preferred_opportunity_ids or frozenset()
+    if first.opportunity_id in preferred and second.opportunity_id not in preferred:
+        primary = first
+    elif second.opportunity_id in preferred and first.opportunity_id not in preferred:
+        primary = second
+    else:
+        primary = sorted((first, second), key=_preference_key)[0]
     dropped = second if primary is first else first
     a = primary.occurrences[0]
     b = dropped.occurrences[0]
