@@ -160,3 +160,63 @@ async def test_semantic_timeout_is_distinguished_from_manual_cancellation(worker
         assert failure["failure_category"] == "timeout"
         assert failure["provider_calls"] == 1 and failure["attempts_complete"] is False
         assert failure["total_tokens"] is None
+
+
+async def test_preflight_failure_persists_safe_zero_spend_and_preserves_last_good(worker):
+    from tests.test_semantic_input_preflight import inventory, outside_region
+
+    deps, _, _, discovery = worker
+    good = await run_regional_worker(scope(), deps, budget=budget())
+    existing_discovery_calls = list(discovery.calls)
+
+    class MalformedSource(SyntheticSource):
+        async def collect(self, research_scope, *, observed_at):
+            # Adapt only as_of/window from the fake worker's explicit scope.
+            fixture_scope, items = inventory()
+            delta = research_scope.window.start - fixture_scope.window.start
+            rebuilt = []
+            from event_radar.models.regional import RegionalOpportunity
+
+            for item in items:
+                payload = item.model_dump(mode="python")
+                for evidence in payload["evidence"]:
+                    evidence["observed_at"] = research_scope.as_of
+                    for field in ("occurrence_start", "occurrence_end"):
+                        if evidence[field] is not None:
+                            evidence[field] += delta
+                for occurrence in payload["occurrences"]:
+                    occurrence["start"] += delta
+                    if occurrence["end"] is not None:
+                        occurrence["end"] += delta
+                rebuilt.append(RegionalOpportunity.model_validate(payload))
+            rebuilt[46] = outside_region(rebuilt[46])
+            return RegionalSourceResult(tuple(rebuilt))
+
+    provider = FakeSemanticProvider()
+    failed = await run_regional_worker(
+        scope(),
+        replace(
+            deps,
+            semantic_provider=provider,
+            registry=SourceRegistry((SourceRegistration(MalformedSource()),)),
+        ),
+        budget=replace(budget(), semantic_batch_size=10),
+        refresh=True,
+    )
+    assert failed.status == "failed" and failed.snapshot_id is None
+    assert provider.requests == []
+    assert discovery.calls == existing_discovery_calls
+    assert read(deps).snapshot_id == good.snapshot_id
+    with build_session_factory(deps.engine)() as session:
+        run = session.get(RegionalResearchRun, failed.run_id)
+        failure = run.diagnostics_payload["stages"][-1]
+        assert failure["failure_category"] == "local_validation"
+        assert failure["provider_calls"] == failure["attempts"] == 0
+        assert failure["usage_complete"] and failure["attempts_complete"]
+        assert failure["total_tokens"] == 0
+        assert Decimal(failure["estimated_model_cost_usd"]) == 0
+        assert failure["input_failure"]["reason"] == "outside_region"
+        assert failure["input_failure"]["batch_number"] == 5
+        assert failure["input_failure"]["opportunity_ids"] == ["event-046"]
+        assert "Synthetic Community" not in str(run.diagnostics_payload)
+        assert len(session.scalars(select(RegionalUniverseSnapshot)).all()) == 1

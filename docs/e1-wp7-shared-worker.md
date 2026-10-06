@@ -239,3 +239,78 @@ The original failed-row JSON SHA-256 before corrective tests was
 `34a23f40730f7fcb8cc9f4f02a9cdc78ea6e846337e65c5101a58875f2f4fe74`;
 verify it again after testing. This is preservation evidence, not a new live-run
 acceptance or WP7 closure.
+
+
+## Semantic-input preflight correction (second proof)
+
+Run `12b19362-4705-46b3-a98b-39acb5562e0c` recorded four completed semantic
+calls / 40 results before `invalid_response / local_validation`. No fifth
+call or discovery was recorded. Its item-level inventory was not saved, so an
+exact historical payload comparison is unavailable.
+
+The owner-authorized **deterministic collection-only** diagnostic reproduced
+109 candidates / 107 retained on 2026-10-06 at 00:14 Pacific. The first four
+10-item requests validated; request five failed `outside_region` for:
+
+- Opportunity: `event-4e1959185cd21047e1dc` (zero-based inventory index 46).
+- Source: `happening-sonoma-county`.
+- Source-reported city/subdivision: `Cloverdale` / `SC`.
+- Adapter-assigned county: `Sonoma County`; required subdivision: `CA`.
+
+The reproducible defect originates at **source admission**, not deduplication
+or semantic transformation. The adapter accepted the source's conflicting state
+while assigning the requested county. An individual RegionalOpportunity does
+not encode the research scope; RegionalAnalysisRequest correctly rejected it.
+The semantic service previously constructed requests only immediately before
+each call, allowing four paid batches before discovering this local defect.
+This explains the reproduced failure pattern; it does not prove byte-for-byte
+identity with the unsaved historical inventory or establish the original first
+proof's root cause.
+
+The event adapter now checks the source subdivision and weekend before admitting
+a candidate and validates each admitted candidate against the scope. Established
+California aliases (CA/California, whitespace/case) normalize to CA. A conflicting
+subdivision is retained as an explicit `outside_region` factual exclusion with
+source/record identity; it is not rewritten to California based on a city name.
+This exclusion reflects the source-reported boundary conflict, **not** a claim
+that the actual event is proven to be in South Carolina. Confirming or correcting
+that source fact requires separate evidence. No regional invariant was relaxed.
+
+`preflight_semantic_inputs(scope, opportunities, batch_size=...)` is a pure
+entrypoint in `event_radar.shared.semantic_input`. Before the first provider
+call of either enrichment pass, it revalidates every original candidate from its
+serialized fields, validates the complete inventory (including duplicates across
+batch boundaries), then prepares and validates every intended request. The service
+reuses those prepared requests. No malformed input is silently removed by
+preflight; failure aborts enrichment with zero provider calls.
+
+Safe persisted `input_failure` diagnostics contain phase, one-based batch number,
+up to two public opportunity identifiers, up to eight source identifiers, and
+a finite rule code: duplicate opportunity identity, duplicate occurrence identity,
+outside region, outside window, observation after as_of, or other contract
+violation. They never copy arbitrary Pydantic messages, input/context dictionaries,
+payloads or API responses. Preflight failures explicitly record zero attempts,
+tokens and cost with complete zero-call accounting. Existing JSON remains readable;
+no database migration is required.
+
+Corrected collection-only verification at 00:21 Pacific retained:
+12 Tourism + 71 Happening + 25 hikes = 108 admitted before deduplication,
+106 after two duplicates, plus one explicit outside-region exclusion.
+All 11 prepared batches (ten of 10, one of 6) passed preflight.
+Neither OpenAI nor the shared-worker module was imported by that diagnostic.
+
+Regression fixtures reproduce the SC/Cloverdale conflict synthetically, show
+batch-five rejection before call one, exercise a valid 107-item inventory through
+11 fake-provider batches, reject cross-batch duplicates and malformed nested
+inputs, and prove safe persisted preflight failure/last-good protection against
+a separate disposable PostgreSQL instance. No live model or web-search call was
+made, and no new research attempt/snapshot was written to the preserved database.
+
+Preserved full-row JSON SHA-256 fingerprints:
+- `ba52478e-1b92-4f6a-a0d8-98c0eba82761`:
+  `34a23f40730f7fcb8cc9f4f02a9cdc78ea6e846337e65c5101a58875f2f4fe74`
+- `12b19362-4705-46b3-a98b-39acb5562e0c`:
+  `d38ae1ffe9f89a8c18a2b8bd945628e9c80d235ba7b1073ad7270828b8b9a43b`
+
+The preserved evidence database must remain outside destructive test fixtures.
+This correction does not authorize another live proof or close WP7.

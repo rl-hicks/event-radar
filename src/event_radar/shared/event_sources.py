@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
+from typing import Literal
 
 from event_radar.collectors.base import EventCollector
 from event_radar.models.event import Event
 from event_radar.models.regional import (
     Claim,
+    FactualExclusion,
     ImportantUnknown,
     Location,
     Observation,
     Occurrence,
     Price,
     PriceQuote,
+    RegionalAnalysisRequest,
     RegionalOpportunity,
     ResearchScope,
     SourceEvidence,
@@ -50,16 +53,38 @@ class EventCollectorRegionalAdapter:
             events = await self._collector.collect(scope.window.start, scope.window.end)
         except self._expected_failures as exc:
             raise RegionalSourceFailure("unavailable") from exc
-        opportunities = tuple(
-            event_to_regional_opportunity(
+        opportunities: list[RegionalOpportunity] = []
+        exclusions: list[FactualExclusion] = []
+        for event in events:
+            # Never infer CA from a county-calendar name or a familiar city when
+            # the public source explicitly reports a conflicting subdivision.
+            reason: Literal["outside_region", "outside_window"] | None = (
+                "outside_region"
+                if _subdivision(event.state) != scope.region.subdivision_code
+                else "outside_window"
+                if not scope.window.overlaps(event.start_time, event.end_time)
+                else None
+            )
+            if reason is not None:
+                exclusions.append(
+                    FactualExclusion(
+                        source_id=self.descriptor.source_id,
+                        source_record_id=event.source_id or str(event.source_url),
+                        reason=reason,
+                        duplicate_of=None,
+                    )
+                )
+                continue
+            opportunity = event_to_regional_opportunity(
                 event,
                 source_id=self.descriptor.source_id,
                 scope=scope,
                 observed_at=observed_at,
             )
-            for event in events
-        )
-        return RegionalSourceResult(opportunities=opportunities)
+            # Scope validation belongs at admission, not after paid enrichment.
+            RegionalAnalysisRequest(scope=scope, opportunities=(opportunity,))
+            opportunities.append(opportunity)
+        return RegionalSourceResult(tuple(opportunities), tuple(exclusions))
 
 
 def event_to_regional_opportunity(
@@ -100,7 +125,7 @@ def event_to_regional_opportunity(
     )
     location = Location(
         country_code="US",
-        subdivision_code=event.state,
+        subdivision_code=_subdivision(event.state),
         county=scope.region.county,
         city=event.city,
         venue=event.venue,
@@ -195,3 +220,9 @@ def _price(event: Event, evidence_id: str) -> Price:
 def _stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:20]
     return f"{prefix}-{digest}"
+
+
+def _subdivision(value: str) -> str:
+    """Canonicalize established California aliases, never conflicting states."""
+    normalized = value.strip().casefold()
+    return "CA" if normalized in {"ca", "california"} else value.strip().upper()

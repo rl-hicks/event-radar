@@ -15,10 +15,12 @@ from event_radar.models.regional import (
     RegionalAnalysisRequest,
     RegionalOpportunity,
     ResearchScope,
+    SemanticInputFailure,
 )
 from event_radar.models.regional_semantics import RegionalSemanticAnalysis
 from event_radar.models.token_usage import TokenUsage, aggregate_token_usage
 from event_radar.shared.failures import classify_failure, safe_usage
+from event_radar.shared.semantic_input import SemanticInputPreflightError, preflight_semantic_inputs
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,12 +99,7 @@ async def enrich_regional_semantics(
     result_count = 0
     usages: list[TokenUsage] = []
     try:
-        if batch_size < 1:
-            raise ValueError("Semantic analysis batch size must be positive.")
-
-        ids = tuple(item.opportunity_id for item in opportunities)
-        if len(ids) != len(set(ids)):
-            raise ValueError("Semantic analysis input opportunity IDs must be unique.")
+        requests = preflight_semantic_inputs(scope, opportunities, batch_size=batch_size)
 
         if not opportunities:
             return SemanticEnrichmentOutcome(
@@ -132,12 +129,9 @@ async def enrich_regional_semantics(
         failure_categories: list[FailureCategory] = []
         successful_batches = 0
 
-        for offset in range(0, len(opportunities), batch_size):
+        for batch_index, request in enumerate(requests):
+            offset = batch_index * batch_size
             originals = opportunities[offset : offset + batch_size]
-            request = RegionalAnalysisRequest(
-                scope=scope,
-                opportunities=tuple(_analysis_input(item) for item in originals),
-            )
             response: SemanticProviderResponse | None = None
             reference_error = False
             for validation_attempt in range(2):
@@ -225,6 +219,16 @@ async def enrich_regional_semantics(
 
     except BaseException as error:
         code, category = classify_failure(error)
+        if isinstance(error, SemanticInputPreflightError) and provider_calls == 0:
+            usages = [
+                TokenUsage(
+                    input_tokens=0,
+                    cached_input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    estimated_model_cost_usd=0,
+                )
+            ]
         if on_failure is not None:
             on_failure(
                 _diagnostics(
@@ -236,7 +240,10 @@ async def enrich_regional_semantics(
                     latency_seconds=monotonic() - started,
                     usages=tuple(usages),
                     failure_code=code,
-                    usage_complete=False,
+                    usage_complete=provider_calls == 0,
+                    input_failure=(
+                        error.detail if isinstance(error, SemanticInputPreflightError) else None
+                    ),
                     failure_category=category,
                     provider_calls=provider_calls,
                     attempts_complete=attempts_complete,
@@ -276,13 +283,6 @@ def validate_semantic_analysis(
                     raise SemanticReferenceError(
                         "Semantic descriptors require description-supporting evidence."
                     )
-
-
-def _analysis_input(opportunity: RegionalOpportunity) -> RegionalOpportunity:
-    """Remove prior semantics so retries/reanalysis reason only from shared factual evidence."""
-    payload = opportunity.model_dump(mode="python")
-    payload["semantics"] = None
-    return RegionalOpportunity.model_validate(payload)
 
 
 def _apply_analysis(
@@ -327,6 +327,7 @@ def _diagnostics(
     failure_category: FailureCategory | None = None,
     provider_calls: int | None = None,
     attempts_complete: bool = True,
+    input_failure: SemanticInputFailure | None = None,
 ) -> OperationalDiagnostics:
     usage = safe_usage(aggregate_token_usage(usages))
     return OperationalDiagnostics(
@@ -352,4 +353,5 @@ def _diagnostics(
         failure_category=failure_category,
         provider_calls=provider_calls,
         attempts_complete=attempts_complete,
+        input_failure=input_failure,
     )

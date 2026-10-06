@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from event_radar.models.regional import FailureCategory, FailureCode
 from event_radar.models.token_usage import TokenUsage
+from event_radar.shared.semantic_input import SemanticInputPreflightError
 
 
 def classify_failure(error: BaseException) -> tuple[FailureCode, FailureCategory]:
@@ -14,7 +15,7 @@ def classify_failure(error: BaseException) -> tuple[FailureCode, FailureCategory
         return "unavailable", "cancelled"
     if isinstance(error, TimeoutError):
         return "timeout", "timeout"
-    if isinstance(error, ValidationError):
+    if isinstance(error, (ValidationError, SemanticInputPreflightError)):
         return "invalid_response", "local_validation"
     return "invalid_response", "local_invariant"
 

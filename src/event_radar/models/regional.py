@@ -23,6 +23,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 Text = Annotated[
     str,
@@ -489,6 +490,26 @@ FailureCategory = Literal[
 ]
 
 
+SemanticInputReason = Literal[
+    "duplicate_opportunity_identity",
+    "duplicate_occurrence_identity",
+    "outside_region",
+    "outside_window",
+    "after_as_of",
+    "other_contract_violation",
+]
+
+
+class SemanticInputFailure(Contract):
+    """Bounded public identifiers only; no validator messages or candidate payloads."""
+
+    phase: Literal["opportunity", "inventory", "batch"]
+    reason: SemanticInputReason
+    batch_number: Annotated[int, Field(ge=1)] | None
+    opportunity_ids: tuple[Identifier, ...] = Field(max_length=2)
+    source_ids: tuple[Identifier, ...] = Field(max_length=8)
+
+
 class OperationalDiagnostics(Contract):
     """No raw payloads, exception strings, credentials, personal IDs or prompts."""
 
@@ -500,6 +521,7 @@ class OperationalDiagnostics(Contract):
     failure_category: FailureCategory | None = None
     provider_calls: Count | None = None
     attempts_complete: StrictBool = True
+    input_failure: SemanticInputFailure | None = None
     status: Literal["success", "partial", "fallback", "failed", "skipped"]
     attempts: Count
     input_count: Count
@@ -626,21 +648,34 @@ class RegionalDiscoveryRequest(Contract):
 def _validate_inventory(
     scope: ResearchScope, opportunities: tuple[RegionalOpportunity, ...]
 ) -> None:
-    _unique(tuple(o.opportunity_id for o in opportunities))
-    _unique(tuple(o.occurrence_id for p in opportunities for o in p.occurrences))
+    # Stable rule codes and public IDs permit safe preflight diagnostics without
+    # depending on human-readable Pydantic messages.
+    opportunity_ids: set[str] = set()
+    occurrence_ids: dict[str, str] = {}
     region = scope.region
     boundary = (region.country_code, region.subdivision_code, region.county)
-    exact_occurrences: set[tuple[object, ...]] = set()
+    exact_occurrences: dict[tuple[object, ...], str] = {}
     for opportunity in opportunities:
+        identifier = opportunity.opportunity_id
+        if identifier in opportunity_ids:
+            _inventory_violation("duplicate_opportunity_identity", identifier)
+        opportunity_ids.add(identifier)
         locations = [opportunity.location, *(o.location for o in opportunity.occurrences)]
         if any((p.country_code, p.subdivision_code, p.county) != boundary for p in locations):
-            raise ValueError("Opportunity is outside the explicit regional boundary.")
+            _inventory_violation("outside_region", identifier)
         for evidence in opportunity.evidence:
             if _instant(evidence.observed_at) > _instant(scope.as_of):
-                raise ValueError("Evidence observation cannot follow as_of.")
+                _inventory_violation("after_as_of", identifier)
         for occurrence in opportunity.occurrences:
+            if occurrence.occurrence_id in occurrence_ids:
+                _inventory_violation(
+                    "duplicate_occurrence_identity",
+                    identifier,
+                    occurrence_ids[occurrence.occurrence_id],
+                )
+            occurrence_ids[occurrence.occurrence_id] = identifier
             if not scope.window.overlaps(occurrence.start, occurrence.end):
-                raise ValueError("Occurrence does not overlap the regional weekend.")
+                _inventory_violation("outside_window", identifier)
             place = occurrence.location
             if place.city is not None and place.venue is not None:
                 signature = (
@@ -654,8 +689,26 @@ def _validate_inventory(
                     place.venue,
                 )
                 if signature in exact_occurrences:
-                    raise ValueError("Exact duplicate occurrences must combine provenance.")
-                exact_occurrences.add(signature)
+                    _inventory_violation(
+                        "duplicate_occurrence_identity", identifier, exact_occurrences[signature]
+                    )
+                exact_occurrences[signature] = identifier
+
+
+def _inventory_violation(reason: SemanticInputReason, *opportunity_ids: str) -> None:
+    messages = {
+        "duplicate_opportunity_identity": "Identifiers and claim references must be unique.",
+        "duplicate_occurrence_identity": "Exact duplicate occurrences must combine provenance; "
+        "identifiers must be unique.",
+        "outside_region": "Opportunity is outside the explicit regional boundary.",
+        "outside_window": "Occurrence does not overlap the regional weekend.",
+        "after_as_of": "Evidence observation cannot follow as_of.",
+    }
+    raise PydanticCustomError(
+        "regional_" + reason,
+        messages.get(reason, "Regional inventory violates its contract."),
+        {"reason": reason, "opportunity_ids": opportunity_ids},
+    )
 
 
 def _unique(values: tuple[str, ...]) -> None:
