@@ -15,17 +15,17 @@ uv run python -m event_radar.shared_worker --synthetic \
 
 Set `TEST_DATABASE_URL` to the repository's dedicated disposable PostgreSQL
 service, start that service, and apply Alembic migrations there first.
-The CLI does not apply migrations. It rejects hosted databases, libpq overrides,
+The CLI does not apply migrations. Synthetic mode rejects hosted databases, libpq overrides,
 and policy names outside the synthetic namespace. It does not load dotenv,
-legacy Settings, Telegram, personal state, FastAPI, or OpenAI adapters.
+legacy Settings, Telegram, personal state, FastAPI, or invoke OpenAI adapters in synthetic mode.
 
 The reusable Python entrypoint is `run_regional_worker(scope, dependencies,
 budget=..., refresh=False)` in `event_radar.shared.worker`.
 Inject the existing WP3 source registry, WP4 semantic provider, WP5 planner,
 researcher and independent verifier, and a PostgreSQL engine. The registry remains
 source-agnostic; WP7 adds no production source adapters. The existing explicit
-WP4/WP5 OpenAI adapters can be composed by a separately authorized runtime;
-this change intentionally supplies no live-provider CLI mode or credentials.
+WP4/WP5 OpenAI adapters can now be composed through guarded real mode, documented
+below. Executing that mode still requires separate owner authorization.
 
 ResearchScope retains Sonoma County / America/Los_Angeles and Friday 00:00
 through Monday 00:00 exclusive. The caller supplies Friday, as_of, and policy.
@@ -90,3 +90,85 @@ Thursday run would resolve and pass an explicit Friday key in Pacific time;
 no recurring schedule is configured here. Synthetic evidence does not satisfy
 the roadmap's real-provider/active-operation gates. WP8 owns full two-profile
 acceptance; WP7 proves repeated consumers can read one snapshot without research.
+
+## Real public-only staging run — pending owner authorization
+
+**Do not run this command until the owner approves a specific public-only run
+envelope.** This capability does not satisfy WP7's real-provider acceptance gate,
+does not authorize spending, and does not close governing WP7/E1 requirements.
+
+Supply these secrets using a secure runtime environment, never command arguments
+or checked-in files:
+
+- `EVENT_RADAR_RESEARCH_DATABASE_URL`: explicit `postgresql+psycopg` URL with
+  username, password, host, port and database. Remote targets require
+  `sslmode=verify-full`. Only that URL query option is accepted.
+- `EVENT_RADAR_RESEARCH_OPENAI_API_KEY`: dedicated worker API key.
+
+No `.env` is loaded. Ambient `DATABASE_URL` and `OPENAI_API_KEY` are not
+substitutes. Remove `PG*` libpq variables to prevent target redirection.
+Use a direct PostgreSQL connection or session-mode pool; transaction pooling is
+unsupported by WP7's advisory lock. The declared connection mode is an operator
+assertion, not automatic proxy detection; known transaction-pool port 6543 is
+rejected. Confirm the actual endpoint with the owner.
+
+The target must already have Alembic `0002_regional_universes` applied (and its
+`0001_app_users` predecessor). The command never migrates or creates schema.
+Any hosted migration remains a separate approved operation.
+
+Command template, **only after authorization**, from the repository's uv environment:
+
+```sh
+uv run python -m event_radar.shared_worker \
+  --real --acknowledge-live-run --database-session-mode direct \
+  --region sonoma-county-ca --weekend "$FRIDAY" --as-of "$AS_OF" \
+  --policy-version "$RESEARCH_POLICY_VERSION" \
+  --semantic-model "$SEMANTIC_MODEL" --discovery-model "$DISCOVERY_MODEL" \
+  --timeout-seconds "$RESEARCH_TIMEOUT_SECONDS" \
+  --semantic-batch-size "$SEMANTIC_BATCH_SIZE" \
+  --max-waves "$DISCOVERY_MAX_WAVES" \
+  --max-model-calls "$DISCOVERY_MAX_MODEL_CALLS" \
+  --max-web-search-calls "$DISCOVERY_MAX_WEB_SEARCH_CALLS" \
+  --max-model-cost-usd "$DISCOVERY_MAX_MODEL_COST_USD" \
+  --semantic-pricing "$SEMANTIC_INPUT_RATE" "$SEMANTIC_CACHED_RATE" "$SEMANTIC_OUTPUT_RATE" \
+  --discovery-pricing "$DISCOVERY_INPUT_RATE" "$DISCOVERY_CACHED_RATE" "$DISCOVERY_OUTPUT_RATE"
+```
+
+Every numeric field above must be explicitly supplied; there are no live model
+or budget defaults. Pricing is USD per million input/cached-input/output tokens
+for the selected models, provided explicitly rather than obtained from legacy
+Settings or assumed current. The rates must be reviewed for the approved models.
+The live acknowledgement is only a runtime guard, never evidence of owner approval.
+Real mode rejects synthetic policy names. Friday and aware as_of validation use
+the existing Sonoma/Pacific ResearchScope. A completed key replays unless the
+owner-authorized command explicitly adds `--refresh`.
+
+The runtime composes:
+
+- Sonoma County Tourism public events;
+- Happening in Sonoma County public events;
+- the repository's curated Sonoma hike catalog;
+- WP4 `OpenAIRegionalSemanticProvider`;
+- WP5 `OpenAIAdaptiveDiscoveryProvider` as planner/researcher/independent verifier;
+- the existing WP7 worker and WP6 PostgreSQL services.
+
+Models come solely from the two CLI model flags. The runtime fixes OpenAI's
+public API endpoint, disables SDK retries, and owns/closes the client and engine.
+Its model transport ignores ambient proxy configuration. Public source adapters
+retain their existing HTTP behavior. Prompt files are the four existing
+`prompts/regional_*.md` assets; the catalog is `data/hikes.json`. These resolve
+relative to the installed repository source, independent of shell cwd. No new
+sources or source promotion are introduced.
+
+WP5's estimated model-cost limit is a **discovery** limit checked between responses.
+An in-flight response can exceed it. It is not a hard whole-run billing cap.
+Semantic model usage is separately measured; web-search/tool fees and pricing
+premiums are not included in model-token estimates. The owner must approve an
+envelope covering both semantic passes, discovery, and tool charges, with explicit
+provider-side spending controls as appropriate. Configuration values and a runtime
+acknowledgement do not supply that authorization.
+
+The Product Shared Research workflow remains synthetic-only and manual-only;
+real execution is an explicit local/runtime CLI operation. No recurring schedule,
+deployment, hosted migration, private-state access, personal User Context,
+Telegram, legacy pipeline, or AI #3 is introduced or permitted by this capability.

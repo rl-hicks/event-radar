@@ -113,6 +113,7 @@ def default_sonoma_source_registry(
     *,
     user_agent: str,
     timeout_seconds: float = 20.0,
+    hike_repository: HikeCatalogRepository | None = None,
 ) -> SourceRegistry:
     """Initial registry composition; adding a source means registering an adapter."""
     return SourceRegistry(
@@ -129,6 +130,6 @@ def default_sonoma_source_registry(
                     timeout_seconds=timeout_seconds,
                 )
             ),
-            SourceRegistration(CuratedHikeCatalogSource()),
+            SourceRegistration(CuratedHikeCatalogSource(hike_repository)),
         )
     )

@@ -45,8 +45,8 @@ class ResearchBudget:
     """Explicit discovery bounds plus a deadline for the entire research path.
 
     Values are configuration, not owner authorization for provider spend.
-    Live provider composition/whole-run spend authorization is deliberately not
-    exposed by the synthetic-only CLI.
+    Live runtime composition requires separately supplied explicit configuration
+    and owner authorization; a runtime acknowledgement cannot grant it.
     """
 
     discovery: DiscoveryBudget
