@@ -73,6 +73,12 @@ jobs:
               ("tests.test_api_integration", "test_concurrent_identity_creation"),
               ("tests.test_supabase_integration", "test_signed_tokens_through_api_postgres"),
           }
+          required.update({
+              ("tests.test_shared_worker_integration", "test_full_worker_persistence_replay_and_read_only_reuse"),
+              ("tests.test_shared_worker_integration", "test_concurrent_same_key_and_distinct_key_isolation"),
+              ("tests.test_shared_worker_integration", "test_partial_and_failed_refresh_preserve_last_good"),
+              ("tests.test_shared_worker_integration", "test_process_death_releases_claim_and_recovers_committed_attempt"),
+          })
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()
