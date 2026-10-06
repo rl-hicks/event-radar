@@ -172,3 +172,70 @@ The Product Shared Research workflow remains synthetic-only and manual-only;
 real execution is an explicit local/runtime CLI operation. No recurring schedule,
 deployment, hosted migration, private-state access, personal User Context,
 Telegram, legacy pipeline, or AI #3 is introduced or permitted by this capability.
+
+## First live-proof failure and corrective observability
+
+The one authorized attempt `ba52478e-1b92-4f6a-a0d8-98c0eba82761` failed after
+collection recorded 109 candidates / 107 deduplicated opportunities. Its original
+row contains no semantic telemetry and no snapshot. **The original root cause
+remains unproven.** The corrective work does not refresh that key, overwrite its
+evidence, or make further external provider calls.
+
+Operational diagnostics now carry an optional bounded `failure_category`,
+`provider_calls` (semantic service invocations, not a claim of billable calls),
+and `attempts_complete`. Existing stored JSON remains readable using defaults;
+no database migration is needed. Categories distinguish provider transport/status,
+SDK parse/finish-reason, response schema/behavior, local validation/invariant,
+configuration, cancellation and timeout failures. No exception message, arbitrary
+class name, API body, request payload or credentials are persisted.
+
+The semantic service checkpoints known batch usage and call accounting before
+propagating unexpected errors. The worker persists the failing stage before
+finalizing a failed attempt. Known numeric usage is a subtotal when the failed
+call's usage is unavailable; `usage_complete=false` and
+`attempts_complete=false` prevent treating unknown work as zero. Invalid numeric
+telemetry cannot break failure reporting. Local errors use
+`invalid_response` plus a local category rather than masquerading as provider
+unavailability. Expected provider failures retain existing partial/fallback
+semantics; neither partial nor failed retries replace the last-good snapshot.
+
+The installed OpenAI SDK 2.53.0 inspection identified public
+`APIResponseValidationError`, Pydantic/JSON parse errors, and Pydantic schema
+construction errors outside the original boundary. The adapter now handles these
+with bounded codes. Public `LengthFinishReasonError` and
+`ContentFilterFinishReasonError` also receive defensive handling; those exceptions
+are associated with chat-completion parsing, not evidence that the installed
+Responses path or the first live run raised them. Incomplete/unsupported Responses
+results are explicitly classified. Broad TypeError/RuntimeError catches are not
+used to disguise programming defects as SDK availability failures.
+
+Offline tests call the supported `AsyncOpenAI.responses.parse` API through
+`httpx.MockTransport`, checking actual schema construction and valid/malformed
+responses with external sockets blocked. No private SDK API is invoked. The
+current semantic schema passes that offline contract test, which does not prove
+remote model compatibility or explain the historical failure. On parsing errors
+where the SDK does not expose response usage, cost remains explicitly unknown.
+Only numeric usage exposed by known exception types is retained.
+
+### Next authorized proof: recommend semantic batch size 10
+
+Batch size 25 is not established as the cause. The request sends complete
+opportunities, occurrence facts and evidence; the output contains an entry per
+opportunity and a variable number of descriptors. Smaller batches reduce each
+request/response's size and the number of candidates affected by a parse failure.
+
+A validated synthetic event/hike request-size comparison (not the lost live input,
+and not token counts) measured 8,267 bytes at 5 items, 15,330 at 10 and 38,420 at 25.
+Recommend **10** for the next separately authorized development proof. For 107
+candidates this means 11 initial batches rather than 5 at size 25, with up to one
+reference-correction call per batch under existing WP4 rules. This increases
+request overhead and must be included in the owner-approved timeout/spend envelope.
+The global/default batch size remains 25; no product policy is changed.
+
+The original disposable evidence database must not be used by the destructive
+pytest migration fixture. Corrective local tests ran in a separate PostgreSQL
+container network namespace, preserving the normal localhost/55432 safety guard.
+The original failed-row JSON SHA-256 before corrective tests was
+`34a23f40730f7fcb8cc9f4f02a9cdc78ea6e846337e65c5101a58875f2f4fe74`;
+verify it again after testing. This is preservation evidence, not a new live-run
+acceptance or WP7 closure.

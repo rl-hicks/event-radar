@@ -474,12 +474,32 @@ class SourceCoverage(Contract):
         return self
 
 
+FailureCategory = Literal[
+    "provider_transport",
+    "provider_status",
+    "sdk_parse",
+    "sdk_finish_reason",
+    "response_schema",
+    "response_behavior",
+    "local_validation",
+    "local_invariant",
+    "timeout",
+    "cancelled",
+    "configuration",
+]
+
+
 class OperationalDiagnostics(Contract):
     """No raw payloads, exception strings, credentials, personal IDs or prompts."""
 
-    stage: Literal["collection", "semantic_analysis", "complementary_discovery"]
+    stage: Literal[
+        "collection", "semantic_analysis", "complementary_discovery", "assembly", "persistence"
+    ]
     model_id: Identifier | None
     cost_scope: Literal["model_tokens_only"] = "model_tokens_only"
+    failure_category: FailureCategory | None = None
+    provider_calls: Count | None = None
+    attempts_complete: StrictBool = True
     status: Literal["success", "partial", "fallback", "failed", "skipped"]
     attempts: Count
     input_count: Count

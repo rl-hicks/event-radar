@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
+from time import monotonic
 from typing import Literal, Protocol
 
 from event_radar.models.regional import (
+    FailureCategory,
     FailureCode,
     OperationalDiagnostics,
     RegionalAnalysisRequest,
@@ -15,6 +18,7 @@ from event_radar.models.regional import (
 )
 from event_radar.models.regional_semantics import RegionalSemanticAnalysis
 from event_radar.models.token_usage import TokenUsage, aggregate_token_usage
+from event_radar.shared.failures import classify_failure, safe_usage
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,12 +50,24 @@ class SemanticProviderFailure(RuntimeError):
         attempts: int = 1,
         latency_seconds: float | None = None,
         usage: TokenUsage | None = None,
+        category: FailureCategory | None = None,
     ) -> None:
+        if type(attempts) is not int or attempts < 0:
+            raise ValueError("Invalid semantic provider attempt accounting.")
         super().__init__(failure_code)
         self.failure_code = failure_code
         self.attempts = attempts
         self.latency_seconds = latency_seconds
-        self.usage = usage or TokenUsage()
+        self.usage = safe_usage(usage or TokenUsage())
+        self.failure_category: FailureCategory = category or (
+            "configuration"
+            if failure_code == "not_configured"
+            else "response_schema"
+            if failure_code == "invalid_response"
+            else "provider_status"
+            if failure_code == "rate_limited"
+            else "provider_transport"
+        )
 
 
 class SemanticReferenceError(ValueError):
@@ -71,112 +87,162 @@ async def enrich_regional_semantics(
     provider: RegionalSemanticProvider,
     *,
     batch_size: int = 25,
+    on_failure: Callable[[OperationalDiagnostics], None] | None = None,
 ) -> SemanticEnrichmentOutcome:
     """Enrich every opportunity without allowing the provider to rewrite factual fields."""
-    if batch_size < 1:
-        raise ValueError("Semantic analysis batch size must be positive.")
+    started = monotonic()
+    attempts = 0
+    provider_calls = 0
+    attempts_complete = True
+    result_count = 0
+    usages: list[TokenUsage] = []
+    try:
+        if batch_size < 1:
+            raise ValueError("Semantic analysis batch size must be positive.")
 
-    ids = tuple(item.opportunity_id for item in opportunities)
-    if len(ids) != len(set(ids)):
-        raise ValueError("Semantic analysis input opportunity IDs must be unique.")
+        ids = tuple(item.opportunity_id for item in opportunities)
+        if len(ids) != len(set(ids)):
+            raise ValueError("Semantic analysis input opportunity IDs must be unique.")
 
-    if not opportunities:
+        if not opportunities:
+            return SemanticEnrichmentOutcome(
+                opportunities=(),
+                diagnostics=_diagnostics(
+                    model_id=provider.model_id,
+                    status="skipped",
+                    attempts=0,
+                    input_count=0,
+                    result_count=0,
+                    latency_seconds=0.0,
+                    usages=(),
+                    failure_code=None,
+                    usage_complete=False,
+                ),
+                fallback_opportunity_ids=(),
+            )
+
+        enriched: dict[str, RegionalOpportunity] = {
+            item.opportunity_id: item for item in opportunities
+        }
+        fallback_ids: list[str] = []
+        usages = []
+        attempts = 0
+        latency_seconds = 0.0
+        failure_codes: list[FailureCode] = []
+        failure_categories: list[FailureCategory] = []
+        successful_batches = 0
+
+        for offset in range(0, len(opportunities), batch_size):
+            originals = opportunities[offset : offset + batch_size]
+            request = RegionalAnalysisRequest(
+                scope=scope,
+                opportunities=tuple(_analysis_input(item) for item in originals),
+            )
+            response: SemanticProviderResponse | None = None
+            reference_error = False
+            for validation_attempt in range(2):
+                correction = (
+                    None
+                    if validation_attempt == 0
+                    else (
+                        "Return every supplied opportunity_id exactly once. "
+                        "Use only evidence_ids belonging to that opportunity, and only "
+                        "description-supporting evidence for semantic descriptors."
+                    )
+                )
+                try:
+                    provider_calls += 1
+                    attempts_complete = False
+                    candidate = await provider.analyze(request, correction=correction)
+                except SemanticProviderFailure as exc:
+                    attempts_complete = True
+                    attempts += exc.attempts
+                    latency_seconds += exc.latency_seconds or 0.0
+                    usages.append(exc.usage)
+                    failure_codes.append(exc.failure_code)
+                    failure_categories.append(exc.failure_category)
+                    break
+
+                if type(candidate.attempts) is not int or candidate.attempts < 1:
+                    raise ValueError("Invalid semantic provider attempt accounting.")
+                attempts_complete = True
+                attempts += candidate.attempts
+                latency_seconds += candidate.latency_seconds or 0.0
+                usages.append(safe_usage(candidate.usage))
+                try:
+                    validate_semantic_analysis(request, candidate.analysis)
+                except SemanticReferenceError:
+                    reference_error = True
+                    if validation_attempt == 0:
+                        continue
+                    failure_codes.append("invalid_response")
+                    failure_categories.append("response_schema")
+                    break
+                response = candidate
+                reference_error = False
+                break
+
+            if response is None:
+                if reference_error and not failure_codes:
+                    failure_codes.append("invalid_response")
+                fallback_ids.extend(item.opportunity_id for item in originals)
+                continue
+
+            enriched.update(_apply_analysis(originals, response.analysis))
+            successful_batches += 1
+            result_count += len(originals)
+
+        batch_count = (len(opportunities) + batch_size - 1) // batch_size
+        failed_batches = batch_count - successful_batches
+        status: Literal["success", "partial", "fallback"] = (
+            "success"
+            if failed_batches == 0
+            else "partial"
+            if successful_batches > 0
+            else "fallback"
+        )
+        complete_usage = (
+            all(_usage_complete(item) for item in usages) and len(usages) == batch_count
+        )
         return SemanticEnrichmentOutcome(
-            opportunities=(),
+            opportunities=tuple(enriched[item.opportunity_id] for item in opportunities),
             diagnostics=_diagnostics(
                 model_id=provider.model_id,
-                status="skipped",
-                attempts=0,
-                input_count=0,
-                result_count=0,
-                latency_seconds=0.0,
-                usages=(),
-                failure_code=None,
-                usage_complete=False,
+                status=status,
+                attempts=attempts,
+                input_count=len(opportunities),
+                result_count=len(opportunities) - len(fallback_ids),
+                latency_seconds=latency_seconds,
+                usages=tuple(usages),
+                failure_code=failure_codes[0] if failure_codes else None,
+                usage_complete=complete_usage,
+                failure_category=failure_categories[0] if failure_categories else None,
+                provider_calls=provider_calls,
+                attempts_complete=attempts_complete,
             ),
-            fallback_opportunity_ids=(),
+            fallback_opportunity_ids=tuple(fallback_ids),
         )
 
-    enriched: dict[str, RegionalOpportunity] = {item.opportunity_id: item for item in opportunities}
-    fallback_ids: list[str] = []
-    usages: list[TokenUsage] = []
-    attempts = 0
-    latency_seconds = 0.0
-    failure_codes: list[FailureCode] = []
-    successful_batches = 0
-
-    for offset in range(0, len(opportunities), batch_size):
-        originals = opportunities[offset : offset + batch_size]
-        request = RegionalAnalysisRequest(
-            scope=scope,
-            opportunities=tuple(_analysis_input(item) for item in originals),
-        )
-        response: SemanticProviderResponse | None = None
-        reference_error = False
-        for validation_attempt in range(2):
-            correction = (
-                None
-                if validation_attempt == 0
-                else (
-                    "Return every supplied opportunity_id exactly once. "
-                    "Use only evidence_ids belonging to that opportunity, and only "
-                    "description-supporting evidence for semantic descriptors."
+    except BaseException as error:
+        code, category = classify_failure(error)
+        if on_failure is not None:
+            on_failure(
+                _diagnostics(
+                    model_id=provider.model_id,
+                    status="failed",
+                    attempts=attempts,
+                    input_count=len(opportunities),
+                    result_count=result_count,
+                    latency_seconds=monotonic() - started,
+                    usages=tuple(usages),
+                    failure_code=code,
+                    usage_complete=False,
+                    failure_category=category,
+                    provider_calls=provider_calls,
+                    attempts_complete=attempts_complete,
                 )
             )
-            try:
-                candidate = await provider.analyze(request, correction=correction)
-            except SemanticProviderFailure as exc:
-                attempts += exc.attempts
-                latency_seconds += exc.latency_seconds or 0.0
-                usages.append(exc.usage)
-                failure_codes.append(exc.failure_code)
-                break
-
-            attempts += candidate.attempts
-            latency_seconds += candidate.latency_seconds or 0.0
-            usages.append(candidate.usage)
-            try:
-                validate_semantic_analysis(request, candidate.analysis)
-            except SemanticReferenceError:
-                reference_error = True
-                if validation_attempt == 0:
-                    continue
-                failure_codes.append("invalid_response")
-                break
-            response = candidate
-            reference_error = False
-            break
-
-        if response is None:
-            if reference_error and not failure_codes:
-                failure_codes.append("invalid_response")
-            fallback_ids.extend(item.opportunity_id for item in originals)
-            continue
-
-        enriched.update(_apply_analysis(originals, response.analysis))
-        successful_batches += 1
-
-    batch_count = (len(opportunities) + batch_size - 1) // batch_size
-    failed_batches = batch_count - successful_batches
-    status: Literal["success", "partial", "fallback"] = (
-        "success" if failed_batches == 0 else "partial" if successful_batches > 0 else "fallback"
-    )
-    complete_usage = all(_usage_complete(item) for item in usages) and len(usages) == batch_count
-    return SemanticEnrichmentOutcome(
-        opportunities=tuple(enriched[item.opportunity_id] for item in opportunities),
-        diagnostics=_diagnostics(
-            model_id=provider.model_id,
-            status=status,
-            attempts=attempts,
-            input_count=len(opportunities),
-            result_count=len(opportunities) - len(fallback_ids),
-            latency_seconds=latency_seconds,
-            usages=tuple(usages),
-            failure_code=failure_codes[0] if failure_codes else None,
-            usage_complete=complete_usage,
-        ),
-        fallback_opportunity_ids=tuple(fallback_ids),
-    )
+        raise
 
 
 def validate_semantic_analysis(
@@ -258,8 +324,11 @@ def _diagnostics(
     usages: tuple[TokenUsage, ...],
     failure_code: FailureCode | None,
     usage_complete: bool,
+    failure_category: FailureCategory | None = None,
+    provider_calls: int | None = None,
+    attempts_complete: bool = True,
 ) -> OperationalDiagnostics:
-    usage = aggregate_token_usage(usages)
+    usage = safe_usage(aggregate_token_usage(usages))
     return OperationalDiagnostics(
         stage="semantic_analysis",
         model_id=model_id,
@@ -278,6 +347,9 @@ def _diagnostics(
             if usage.estimated_model_cost_usd is not None
             else None
         ),
-        usage_complete=usage_complete,
+        usage_complete=usage_complete and _usage_complete(usage),
         failure_code=failure_code,
+        failure_category=failure_category,
+        provider_calls=provider_calls,
+        attempts_complete=attempts_complete,
     )
