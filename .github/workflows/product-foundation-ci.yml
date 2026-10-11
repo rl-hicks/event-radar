@@ -58,6 +58,8 @@ jobs:
           docker compose -f docker-compose.test.yml exec -T postgres_test pg_isready -U event_radar_test -d event_radar_test
       - name: Complete Python suite with PostgreSQL
         run: uv run pytest -ra --junitxml="$RUNNER_TEMP/python-results.xml"
+      - name: Isolated durable evidence restart regression
+        run: sudo python3 scripts/test_evidence_restart.py
       - name: Require live PostgreSQL evidence
         env:
           TEST_REPORT: ${{ runner.temp }}/python-results.xml

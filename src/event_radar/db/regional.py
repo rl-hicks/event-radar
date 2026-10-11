@@ -199,7 +199,31 @@ def read_current_regional_universe(
     snapshot = session.get(RegionalUniverseSnapshot, record.current_snapshot_id)
     if snapshot is None or snapshot.universe_id != record.id:
         raise RuntimeError("Regional universe head references an invalid snapshot.")
+    return read_regional_snapshot(session, snapshot.id)
+
+
+def read_regional_snapshot(session: Session, snapshot_id: UUID) -> PersistedUniverse | None:
+    """Read an immutable snapshot by ID, validating wire content and integrity."""
+    snapshot = session.get(RegionalUniverseSnapshot, snapshot_id)
+    if snapshot is None:
+        return None
+    record = session.get(RegionalUniverse, snapshot.universe_id)
+    if record is None:
+        raise RuntimeError("Regional snapshot references a missing identity.")
+    if _content_hash(snapshot.universe_payload) != snapshot.content_hash:
+        raise ValueError("Regional snapshot content hash mismatch.")
     parsed = RegionalWeekendUniverse.model_validate(snapshot.universe_payload)
+    if (
+        parsed.scope.identity
+        != ResearchIdentity(
+            region_id=record.region_id,
+            friday=record.weekend_friday,
+            research_policy_version=record.research_policy_version,
+        )
+        or parsed.schema_version != snapshot.schema_version
+        or parsed.scope.as_of != snapshot.as_of
+    ):
+        raise ValueError("Regional snapshot metadata mismatch.")
     quality = snapshot.quality_status
     if quality not in ("success", "partial"):
         raise RuntimeError("Stored regional snapshot has an invalid quality status.")
