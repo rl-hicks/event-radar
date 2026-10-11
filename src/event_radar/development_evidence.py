@@ -14,7 +14,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session
 
 from event_radar.db.config import postgres_url
-from event_radar.db.evidence import export_snapshot, integrity_envelope
+from event_radar.db.evidence import export_run, export_snapshot, integrity_envelope
 from event_radar.db.session import build_engine
 from event_radar.models.regional_discovery import (
     CoverageGap,
@@ -104,8 +104,10 @@ def install_offline_guard() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("export", "discover-offline"))
-    parser.add_argument("--snapshot-id", type=UUID, required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("export", "discover-offline"):
+        commands.add_parser(name).add_argument("--snapshot-id", type=UUID, required=True)
+    commands.add_parser("export-run").add_argument("--run-id", type=UUID, required=True)
     args = parser.parse_args()
     try:
         if args.command == "discover-offline":
@@ -118,7 +120,9 @@ def main() -> int:
                 identity = session.execute(text("SELECT current_database(), current_user")).one()
                 if tuple(identity) != ("event_radar_evidence", "event_radar_evidence"):
                     raise ValueError("Evidence database identity mismatch.")
-                if args.command == "export":
+                if args.command == "export-run":
+                    payload = export_run(session, args.run_id)
+                elif args.command == "export":
                     payload = export_snapshot(session, args.snapshot_id)
                 else:
                     # Fixed in-process fake composition. No environment-selected adapter, model,
@@ -145,7 +149,8 @@ def main() -> int:
             engine.dispose()
         directory = Path("output/development-evidence")
         directory.mkdir(parents=True, exist_ok=True)
-        target = directory / f"{args.command}-{args.snapshot_id}-{uuid4()}.json"
+        identifier = args.run_id if args.command == "export-run" else args.snapshot_id
+        target = directory / f"{args.command}-{identifier}-{uuid4()}.json"
         with target.open("x", encoding="utf-8") as stream:
             json.dump(payload, stream, indent=2, ensure_ascii=False)
             stream.write("\n")

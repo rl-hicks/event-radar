@@ -4,6 +4,7 @@ Creates only uniquely named disposable resources. Never touches the retained evi
 service or historical container. Network namespace has no external interfaces.
 """
 
+import hashlib
 import json
 import os
 import pwd
@@ -148,6 +149,49 @@ engine.dispose()
         assert diagnostic["execution_mode"] == "offline-synthetic"
         assert diagnostic["research_results"] and diagnostic["verification_results"]
         assert export() == before, "Diagnostic mutated stored evidence"
+        failed_run = local(
+            python,
+            "-c",
+            """
+from pathlib import Path
+from sqlalchemy.orm import Session
+from event_radar.db.session import build_engine
+from event_radar.db.config import database_url
+from event_radar.db.regional import begin_regional_research_run, fail_regional_research_run
+from event_radar.models.regional import RegionalWeekendUniverse
+u = RegionalWeekendUniverse.model_validate_json(
+    Path('tests/fixtures/regional/universe.json').read_text()
+)
+scope = u.scope.model_copy(update={'research_policy_version': 'synthetic-failed-export'})
+engine = build_engine(database_url())
+with Session(engine) as s, s.begin():
+    r = begin_regional_research_run(s, scope)
+    fail_regional_research_run(s, r.id, failure_code='unavailable')
+    print(r.id)
+engine.dispose()
+""",
+        )
+        for run_id in (failed_run, before["payload"]["related_identity_runs"][0]["run_id"]):
+            file = local(
+                python,
+                "-m",
+                "event_radar.development_evidence",
+                "export-run",
+                "--run-id",
+                run_id,
+            )
+            exported = json.loads((ROOT / file).read_text())
+            payload = exported["payload"]
+            assert payload["record"]["run_id"] == run_id
+            assert (payload["snapshot"] is None) == (run_id == failed_run)
+            canonical = json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            assert exported["sha256"] == hashlib.sha256(canonical.encode()).hexdigest()
+        print("PASS: real CLI run-ID exports with and without snapshots; integrity verified.")
         print(
             "PASS: fresh migrations, synthetic persistence, stop/start, validated readback, "
             "export integrity, fake CLI discovery, immutable base, no external network."

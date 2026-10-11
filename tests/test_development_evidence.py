@@ -12,8 +12,8 @@ from sqlalchemy import URL, func, select, text
 from sqlalchemy.orm import Session
 
 from alembic import command
-from event_radar.db.evidence import export_snapshot
-from event_radar.db.models import RegionalResearchRun, RegionalUniverseSnapshot
+from event_radar.db.evidence import export_run, export_snapshot
+from event_radar.db.models import RegionalResearchRun, RegionalUniverse, RegionalUniverseSnapshot
 from event_radar.db.regional import (
     begin_regional_research_run,
     complete_regional_research_run,
@@ -213,3 +213,240 @@ for operation in (
         raise AssertionError('offline guard failed')
 """
     subprocess.run([sys.executable, "-c", code], check=True, timeout=20)
+
+
+def assert_integrity(exported):
+    canonical = json.dumps(
+        exported["payload"],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    assert hashlib.sha256(canonical.encode()).hexdigest() == exported["sha256"]
+
+
+def regional_rows(session):
+    # Compare every column, not just counts, across separate committed transactions.
+    return [
+        session.execute(select(model.__table__).order_by(model.id)).all()
+        for model in (RegionalUniverse, RegionalResearchRun, RegionalUniverseSnapshot)
+    ]
+
+
+@pytest.fixture
+def exportable_run(database, request):
+    from event_radar.models.regional import OperationalDiagnostics
+    from event_radar.models.regional_discovery import DiscoveryOperation
+    from tests.test_regional_persistence_integration import discovery_summary
+
+    engine, config = database
+    command.upgrade(config, "head")
+    value = universe()
+    status = getattr(request, "param", "failed")
+    diagnostic = OperationalDiagnostics(
+        stage="complementary_discovery",
+        model_id=None,
+        status="failed",
+        attempts=1,
+        attempts_complete=False,
+        provider_calls=None,
+        input_count=2,
+        result_count=0,
+        latency_seconds=None,
+        tool_calls=None,
+        input_tokens=10,
+        cached_input_tokens=None,
+        output_tokens=None,
+        total_tokens=None,
+        estimated_model_cost_usd=None,
+        usage_complete=False,
+        failure_code="unavailable",
+        failure_category="provider_transport",
+    )
+    detail = discovery_summary().model_copy(
+        update={
+            "stop_reason": "provider_failure",
+            "usage": discovery_summary().usage.model_copy(
+                update={
+                    "model_cost_complete": False,
+                    "web_search_calls_complete": False,
+                    "attempts_complete": False,
+                }
+            ),
+            "operations": (
+                DiscoveryOperation(
+                    stage="research",
+                    wave=1,
+                    task_number=1,
+                    failure_code="unavailable",
+                    failure_category="provider_transport",
+                    reason="request_failed",
+                    attempts=1,
+                    attempts_complete=False,
+                    completed_attempts=0,
+                    response_received=None,
+                    tool_calls=None,
+                    tool_calls_complete=False,
+                    latency_seconds=None,
+                    input_tokens=10,
+                    cached_input_tokens=None,
+                    output_tokens=None,
+                    total_tokens=None,
+                    estimated_model_cost_usd=None,
+                    usage_complete=False,
+                    model_cost_complete=False,
+                ),
+            ),
+        }
+    )
+    with Session(engine) as session, session.begin():
+        run = begin_regional_research_run(session, value.scope)
+        run_id = run.id
+        if status == "failed":
+            fail_regional_research_run(
+                session,
+                run_id,
+                failure_code="unavailable",
+                diagnostics=(diagnostic,),
+                discovery_summary=detail,
+            )
+        else:
+            complete_regional_research_run(
+                session,
+                run_id,
+                value,
+                quality_status=status,
+                failure_code="unavailable" if status == "partial" else None,
+                diagnostics=(diagnostic,) if status == "partial" else value.diagnostics,
+                discovery_summary=detail if status == "partial" else discovery_summary(),
+            )
+    return engine, run_id, value, status
+
+
+@pytest.mark.parametrize("exportable_run", ["failed", "success", "partial"], indirect=True)
+def test_run_export_read_only_identity_usage_and_integrity(exportable_run, monkeypatch):
+    engine, run_id, value, status = exportable_run
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Export must not connect to a provider")
+
+    monkeypatch.setattr("socket.socket.connect", forbidden)
+    with Session(engine) as session, session.begin():
+        session.execute(text("SET TRANSACTION READ ONLY"))
+        before = regional_rows(session)
+        exported = export_run(session, run_id)
+        payload = exported["payload"]
+        record = payload["record"]
+        assert payload["identity"] == value.scope.identity.model_dump(mode="json")
+        assert record["run_id"] == str(run_id) and record["status"] == status
+        assert (
+            record["requested_as_of"]
+            == session.get(RegionalResearchRun, run_id).requested_as_of.isoformat()
+        )
+        assert record["started_at"] and record["finished_at"]
+        if status == "failed":
+            assert record["snapshot_id"] is None and payload["snapshot"] is None
+            assert len(before[2]) == 0
+            assert "universe" not in payload
+        else:
+            assert payload["snapshot"]["snapshot_id"] == record["snapshot_id"]
+            assert payload["snapshot"]["quality_status"] == status
+            assert (
+                export_snapshot(session, record["snapshot_id"])["payload"]["availability"]
+                == "exported"
+            )
+        if status != "success":
+            assert record["failure_code"] == "unavailable"
+            op = record["discovery_summary"]["operations"][0]
+            assert op["input_tokens"] == 10
+            for field in (
+                "output_tokens",
+                "total_tokens",
+                "tool_calls",
+                "estimated_model_cost_usd",
+            ):
+                assert op[field] is None
+            assert not op["usage_complete"] and not op["model_cost_complete"]
+            assert not op["tool_calls_complete"] and not op["attempts_complete"]
+            assert record["diagnostics"][0]["failure_category"] == "provider_transport"
+        assert_integrity(exported)
+        missing = export_run(session, uuid4())
+        assert missing["payload"]["availability"] == "unavailable"
+        assert missing["payload"]["record"] is None
+        assert_integrity(missing)
+        assert regional_rows(session) == before
+        wire = json.dumps(exported)
+        for excluded in ("api_key", "password", "raw_response", "exception_body", "user_context"):
+            assert excluded not in wire
+    with Session(engine) as session:
+        assert regional_rows(session) == before
+
+
+@pytest.mark.parametrize("corruption", ["envelope", "stage", "operation", "failure_code"])
+def test_run_export_invalid_diagnostics_fail_safely(
+    exportable_run, corruption, monkeypatch, capsys, tmp_path
+):
+    from event_radar import development_evidence as cli
+
+    engine, run_id, _, _ = exportable_run
+    sentinel = "RAW_EXCEPTION_SECRET_SENTINEL"
+    with Session(engine) as session, session.begin():
+        run = session.get(RegionalResearchRun, run_id)
+        if corruption == "envelope":
+            run.diagnostics_payload = {"raw_response": sentinel}
+        elif corruption == "stage":
+            run.diagnostics_payload = {"stages": [{"stage": sentinel}]}
+        elif corruption == "operation":
+            run.discovery_summary = {
+                **run.discovery_summary,
+                "operations": [{"raw_response": sentinel}],
+            }
+        else:
+            run.failure_code = sentinel
+    with Session(engine) as session:
+        before = regional_rows(session)
+        with pytest.raises(ValueError):
+            export_run(session, run_id)
+    # Exercise the CLI error boundary with the disposable engine and simulated identity only.
+    monkeypatch.setattr(cli, "evidence_url", lambda value: engine.url)
+    monkeypatch.setattr(cli, "build_engine", lambda url: engine)
+    execute = Session.execute
+
+    def execute_with_identity(self, statement, *args, **kwargs):
+        if str(statement) == "SELECT current_database(), current_user":
+
+            class Identity:
+                def one(self):
+                    return ("event_radar_evidence", "event_radar_evidence")
+
+            return Identity()
+        return execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", execute_with_identity)
+    monkeypatch.setattr(
+        sys, "argv", ["development_evidence", "export-run", "--run-id", str(run_id)]
+    )
+    monkeypatch.chdir(tmp_path)
+    assert cli.main() == 1
+    assert sentinel not in capsys.readouterr().out
+    assert not (tmp_path / "output").exists()
+    with Session(engine) as session:
+        assert regional_rows(session) == before
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["export-run", "--snapshot-id"],
+        ["export", "--run-id"],
+        ["discover-offline", "--run-id"],
+    ],
+)
+def test_export_cli_rejects_wrong_identifier(args):
+    result = subprocess.run(
+        [sys.executable, "-m", "event_radar.development_evidence", *args, str(uuid4())],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 2

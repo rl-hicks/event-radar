@@ -66,11 +66,12 @@ List IDs without reading private account tables:
 ```bash
 docker compose --env-file .env.evidence -f docker-compose.evidence.yml exec -T evidence psql -U event_radar_evidence -d event_radar_evidence -c 'SELECT id, as_of, quality_status, content_hash FROM regional_universe_snapshots ORDER BY as_of;'
 uv run python -m event_radar.development_evidence export --snapshot-id SNAPSHOT_UUID
+uv run python -m event_radar.development_evidence export-run --run-id RUN_UUID
 uv run python -m event_radar.development_evidence discover-offline --snapshot-id SNAPSHOT_UUID
 ```
 
-Both commands use database-enforced read-only transactions and verify the live
-database/user identity. The second accepts no live mode, provider/model selector,
+All three commands use database-enforced read-only transactions and verify the live
+database/user identity. The discovery command accepts no live mode, provider/model selector,
 API key, or user context. A process-lifetime audit guard rejects OpenAI/live
 adapter imports, Python socket connection/DNS operations and subprocess launches.
 Its only I/O connection is the explicitly guarded local PostgreSQL connection
@@ -161,3 +162,43 @@ received migrations through `0002_regional_universes`, contained zero snapshots,
 and was stopped with its named volume retained. Its generated local credential is
 in ignored `.env.evidence` (mode 0600); no historical or synthetic record was
 inserted into this retained database.
+
+
+## Run-ID export correction
+
+A failed first attempt needs no snapshot to export:
+`uv run python -m event_radar.development_evidence export-run --run-id RUN_UUID`.
+It uses the same dedicated target, read-only transaction, live identity check,
+ignored output directory, unique filenames and `event-radar-public-evidence-v1`
+SHA-256 envelope. Its payload contains `availability`, `universe_id`, validated
+`identity` (region_id, Friday, research_policy_version), `record` and `snapshot`.
+The record preserves run ID, requested as_of, started/finished timestamps, status,
+bounded failure code, validated stage diagnostics and discovery summary/operations.
+Unknown usage remains null and completeness flags remain unchanged.
+
+`snapshot` is null when absent; otherwise it identifies the integrity-checked
+linked snapshot with ID, quality status, content hash and universe schema version.
+This run export does not fabricate or embed a universe; use snapshot export for
+the full universe when available. Missing runs return `availability: unavailable`,
+`requested_run_id` and `record: null`. Invalid diagnostic envelopes, stage records,
+operations or failure codes fail without writing an export; CLI errors omit raw
+validation inputs and exception bodies. No account tables or arbitrary row blobs
+are exported. The existing snapshot exporter reuses the same safe run serializer.
+
+## Separate execution-lead verification status
+
+Per the E1 execution lead's supplied verification, current model compatibility and
+published pricing have been verified. This is recorded lead-provided evidence,
+not a new provider check by this correction. Actual project-key access and a
+strict whole-run monetary cap have **not** been established. This correction
+does not authorize live execution, change research behavior, or close WP7.
+
+
+Correction verification: **27 focused tests passed**, **673 full Python tests
+passed**, one expected hosted Supabase skip, and **39 web tests passed**. The
+isolated Docker lifecycle proof also exercised actual run-export CLI invocations
+with and without snapshots and verified hashes. Tests compared all regional rows
+before/after read-only export and checked safe rejection of corrupt diagnostics.
+Ruff, mypy, source/build security, web lint/types/build, CLI help and Alembic
+metadata gates passed. Retained evidence was not accessed or modified during
+this correction; all database testing used disposable network-isolated instances.
