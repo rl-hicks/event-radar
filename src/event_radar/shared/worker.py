@@ -159,6 +159,14 @@ async def run_regional_worker(
                 active_stage = "complementary_discovery"
                 stage_started = monotonic()
                 stage_model = dependencies.planner.model_id
+
+                def discovery_failed(
+                    diagnostic: OperationalDiagnostics, detail: AdaptiveDiscoverySummary
+                ) -> None:
+                    nonlocal summary
+                    diagnostics.append(diagnostic)
+                    summary = detail
+
                 discovery = await run_adaptive_discovery(
                     scope,
                     replace(collection, opportunities=initial.opportunities),
@@ -166,6 +174,7 @@ async def run_regional_worker(
                     dependencies.researcher,
                     dependencies.verifier,
                     budget=budget.discovery,
+                    on_failure=discovery_failed,
                     observed_at=scope.as_of,
                 )
                 diagnostics.append(discovery.diagnostics)

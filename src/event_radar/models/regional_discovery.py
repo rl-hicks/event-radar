@@ -18,6 +18,8 @@ from event_radar.models.regional import (
     Claim,
     Confidence,
     Count,
+    FailureCategory,
+    FailureCode,
     Identifier,
     ImportantUnknown,
     Price,
@@ -63,6 +65,66 @@ VerificationRejection = Literal[
 
 class DiscoveryContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+
+DiscoveryStage = Literal[
+    "planning", "research", "verification", "local_validation", "materialization"
+]
+DiscoveryFailureReason = Literal[
+    "request_failed",
+    "schema_construction",
+    "sdk_parse",
+    "response_schema",
+    "sdk_finish_reason",
+    "response_incomplete",
+    "response_error",
+    "response_not_completed",
+    "missing_structured_output",
+    "missing_required_web_search",
+    "web_search_unobservable",
+    "web_search_failed",
+    "local_result_invalid",
+    "materialization_invalid",
+    "local_invariant",
+    "configuration",
+]
+ResponseState = Literal[
+    "completed", "incomplete", "failed", "cancelled", "queued", "in_progress", "unknown"
+]
+StructuredOutputState = Literal["accepted", "missing", "invalid", "unknown"]
+WebSearchState = Literal["observed", "absent", "failed", "unknown", "not_required"]
+
+
+class DiscoveryOperation(DiscoveryContract):
+    """Finite codes and numeric telemetry only; task numbers are local ordinals.
+
+    Counts are known subtotals. A missing response does not mean no billable work.
+    Completed attempts count observed completed model responses, not HTTP success.
+    """
+
+    stage: DiscoveryStage
+    wave: Annotated[int, Field(ge=1, strict=True)]
+    task_number: Annotated[int, Field(ge=1, strict=True)] | None = None
+    failure_code: FailureCode | None = None
+    failure_category: FailureCategory | None = None
+    reason: DiscoveryFailureReason | None = None
+    attempts: Count
+    attempts_complete: StrictBool
+    completed_attempts: Count
+    response_received: StrictBool | None
+    response_state: ResponseState = "unknown"
+    structured_output: StructuredOutputState = "unknown"
+    required_web_search: WebSearchState = "unknown"
+    tool_calls: Count | None
+    tool_calls_complete: StrictBool
+    latency_seconds: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None
+    input_tokens: Count | None
+    cached_input_tokens: Count | None
+    output_tokens: Count | None
+    total_tokens: Count | None
+    estimated_model_cost_usd: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)] | None
+    usage_complete: StrictBool
+    model_cost_complete: StrictBool
 
 
 class CoverageCount(DiscoveryContract):
@@ -243,6 +305,9 @@ class DiscoveryBudgetUsage(DiscoveryContract):
     web_search_calls: Count
     estimated_model_cost_usd: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
     model_cost_complete: StrictBool
+    completed_model_calls: Count | None = None
+    attempts_complete: StrictBool = False
+    web_search_calls_complete: StrictBool = False
 
 
 class DiscoveryWaveRecord(DiscoveryContract):
@@ -260,3 +325,4 @@ class AdaptiveDiscoverySummary(DiscoveryContract):
     usage: DiscoveryBudgetUsage
     waves: tuple[DiscoveryWaveRecord, ...]
     source_leads: tuple[SourceLead, ...]
+    operations: tuple[DiscoveryOperation, ...] = ()

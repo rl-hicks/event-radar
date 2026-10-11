@@ -134,6 +134,31 @@ class FakeClient:
         self.closed = False
         self.responses = self
 
+    def with_options(self, **kwargs):
+        assert kwargs["max_retries"] == 0
+        return self
+
+    @property
+    def with_raw_response(self):
+        async def raw_parse(**kwargs):
+            result = await self.parse(**kwargs)
+            body = {
+                "status": result.status,
+                "error": result.error,
+                "output": [],
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "input_tokens_details": {"cached_tokens": 0},
+                },
+            }
+            return SimpleNamespace(
+                http_response=SimpleNamespace(json=lambda: body), parse=lambda: result
+            )
+
+        return SimpleNamespace(parse=raw_parse)
+
     async def __aenter__(self):
         return self
 

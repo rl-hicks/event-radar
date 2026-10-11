@@ -128,14 +128,38 @@ class FakeResponses:
         self.responses = list(responses)
         self.calls: list[dict[str, object]] = []
 
+    @property
+    def with_raw_response(self):
+        return self
+
     async def parse(self, **kwargs: object) -> object:
         self.calls.append(kwargs)
-        return self.responses.pop(0)
+        result = self.responses.pop(0)
+        body = {
+            "status": result.status,
+            "error": result.error,
+            "output": [{"type": item.type, "status": "completed"} for item in result.output],
+            "usage": {
+                "input_tokens": result.usage.input_tokens,
+                "output_tokens": result.usage.output_tokens,
+                "total_tokens": result.usage.total_tokens,
+                "input_tokens_details": {
+                    "cached_tokens": result.usage.input_tokens_details.cached_tokens
+                },
+            },
+        }
+        return SimpleNamespace(
+            http_response=SimpleNamespace(json=lambda: body), parse=lambda: result
+        )
 
 
 class FakeClient:
     def __init__(self, responses: list[object]) -> None:
         self.responses = FakeResponses(responses)
+
+    def with_options(self, **kwargs):
+        assert kwargs["max_retries"] == 0
+        return self
 
 
 def response(parsed: object, *, with_search: bool) -> object:

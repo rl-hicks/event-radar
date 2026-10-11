@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from time import monotonic
 from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
@@ -14,6 +16,7 @@ from pydantic import StrictBool
 
 from event_radar.models.regional import (
     FactualExclusion,
+    FailureCategory,
     FailureCode,
     ImportantUnknown,
     Location,
@@ -33,18 +36,25 @@ from event_radar.models.regional_discovery import (
     DiscoveryBudget,
     DiscoveryBudgetUsage,
     DiscoveryContext,
+    DiscoveryFailureReason,
+    DiscoveryOperation,
     DiscoveryPlan,
     DiscoveryResearchResult,
+    DiscoveryStage,
     DiscoveryStopReason,
     DiscoveryTask,
     DiscoveryVerificationResult,
     DiscoveryWaveRecord,
     RegionalCoverageSnapshot,
+    ResponseState,
     SourceLead,
+    StructuredOutputState,
+    WebSearchState,
 )
 from event_radar.models.token_usage import TokenUsage, aggregate_token_usage
 from event_radar.shared.collection import RegionalCollectionBatch, SourceCoverageAssessment
 from event_radar.shared.deduplication import deduplicate_regional_opportunities
+from event_radar.shared.failures import classify_failure, safe_usage
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,16 +74,59 @@ class DiscoveryProviderFailure(RuntimeError):
         failure_code: FailureCode,
         *,
         attempts: int = 1,
-        tool_calls: int = 0,
+        tool_calls: int | None = None,
         latency_seconds: float | None = None,
         usage: TokenUsage | None = None,
+        category: FailureCategory | None = None,
+        reason: DiscoveryFailureReason | None = None,
+        response_received: bool | None = None,
+        response_state: ResponseState = "unknown",
+        structured_output: StructuredOutputState = "unknown",
+        required_web_search: WebSearchState = "unknown",
+        tool_calls_complete: bool = False,
+        attempts_complete: bool = True,
     ) -> None:
+        if type(attempts) is not int or attempts < 0:
+            raise ValueError("Invalid discovery attempt count.")
+        if tool_calls is not None and (type(tool_calls) is not int or tool_calls < 0):
+            raise ValueError("Invalid discovery tool count.")
         super().__init__(failure_code)
         self.failure_code = failure_code
         self.attempts = attempts
-        self.tool_calls = tool_calls
+        self.tool_calls = 0 if attempts == 0 and tool_calls is None else tool_calls
         self.latency_seconds = latency_seconds
-        self.usage = usage or TokenUsage()
+        self.usage = safe_usage(
+            usage
+            or (
+                TokenUsage(
+                    input_tokens=0,
+                    cached_input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    estimated_model_cost_usd=0,
+                )
+                if attempts == 0
+                else TokenUsage()
+            )
+        )
+        self.failure_category: FailureCategory = category or (
+            "configuration"
+            if failure_code == "not_configured"
+            else "timeout"
+            if failure_code == "timeout"
+            else "provider_status"
+            if failure_code == "rate_limited"
+            else "response_schema"
+            if failure_code == "invalid_response"
+            else "provider_transport"
+        )
+        self.reason = reason
+        self.response_received = response_received
+        self.response_state = response_state
+        self.structured_output = structured_output
+        self.required_web_search = required_web_search
+        self.tool_calls_complete = tool_calls_complete or attempts == 0
+        self.attempts_complete = attempts_complete
 
 
 class DiscoveryPlanner(Protocol):
@@ -137,40 +190,138 @@ class _BudgetTracker:
 
     def can_model_call(self) -> bool:
         return (
-            self.model_calls < self.budget.max_model_calls
+            self.model_cost_complete
+            and self.model_calls < self.budget.max_model_calls
             and self.estimated_model_cost_usd < self.budget.max_model_cost_usd
         )
 
+    operations: list[DiscoveryOperation] = field(default_factory=list)
+    wave_records: list[DiscoveryWaveRecord] = field(default_factory=list)
+    source_leads: dict[str, SourceLead] = field(default_factory=dict)
+    stage: DiscoveryStage = "planning"
+    active_wave: int = 1
+    task_number: int | None = None
+    in_flight: bool = False
+    call_started: float = 0.0
+
+    def begin(self, stage: DiscoveryStage, wave: int, task_number: int | None = None) -> None:
+        self.stage, self.active_wave, self.task_number = stage, wave, task_number
+        self.in_flight = True
+        self.call_started = monotonic()
+
+    def record(
+        self,
+        *,
+        usage: TokenUsage,
+        attempts: int,
+        tool_calls: int | None,
+        latency_seconds: float | None,
+        failure: DiscoveryProviderFailure | None = None,
+    ) -> None:
+        usage = safe_usage(usage)
+        completed = (
+            attempts
+            if failure is None
+            else int(failure.response_state == "completed" and failure.response_received is True)
+        )
+        usage_complete = _usage_complete(usage) and completed == attempts
+        cost_complete = usage_complete and usage.estimated_model_cost_usd is not None
+        self.operations.append(
+            DiscoveryOperation(
+                stage=self.stage,
+                wave=self.active_wave,
+                task_number=self.task_number,
+                failure_code=failure.failure_code if failure else None,
+                failure_category=failure.failure_category if failure else None,
+                reason=failure.reason if failure else None,
+                attempts=attempts,
+                attempts_complete=failure.attempts_complete if failure else True,
+                completed_attempts=completed,
+                response_received=failure.response_received if failure else True,
+                response_state=failure.response_state if failure else "completed",
+                structured_output=failure.structured_output if failure else "accepted",
+                required_web_search=(
+                    failure.required_web_search
+                    if failure
+                    else "not_required"
+                    if self.stage == "planning"
+                    else "observed"
+                    if tool_calls
+                    else "unknown"
+                ),
+                tool_calls=tool_calls,
+                tool_calls_complete=failure.tool_calls_complete if failure else True,
+                latency_seconds=latency_seconds,
+                input_tokens=usage.input_tokens,
+                cached_input_tokens=usage.cached_input_tokens,
+                output_tokens=usage.output_tokens,
+                total_tokens=usage.total_tokens,
+                estimated_model_cost_usd=(
+                    Decimal(str(usage.estimated_model_cost_usd))
+                    if usage.estimated_model_cost_usd is not None
+                    else None
+                ),
+                usage_complete=usage_complete,
+                model_cost_complete=cost_complete,
+            )
+        )
+        self.model_calls += attempts
+        self.web_search_calls += tool_calls or 0
+        self.latency_seconds += latency_seconds or 0.0
+        self.usages.append(usage)
+        if usage.estimated_model_cost_usd is not None:
+            self.estimated_model_cost_usd += Decimal(str(usage.estimated_model_cost_usd))
+        self.model_cost_complete &= cost_complete
+        if failure:
+            self.failure_codes.append(failure.failure_code)
+
+    def check_bounds(self) -> None:
+        # Record known usage before raising a local contract violation.
+        if self.model_calls > self.budget.max_model_calls:
+            raise ValueError("Provider exceeded the supplied model-call budget.")
+        if self.web_search_calls > self.budget.max_web_search_calls:
+            raise ValueError("Provider exceeded the supplied web-search budget.")
+
     def consume_response[T](self, response: DiscoveryProviderResponse[T]) -> None:
+        self.in_flight = False
         if response.tool_calls < 0 or response.attempts < 1:
             raise ValueError("Provider response accounting must be non-negative.")
-        if response.attempts > self.budget.max_model_calls - self.model_calls:
-            raise ValueError("Provider exceeded the supplied model-call budget.")
-        if response.tool_calls > self.remaining_web_search_calls:
-            raise ValueError("Provider exceeded the supplied web-search budget.")
-        self.model_calls += response.attempts
-        self.web_search_calls += response.tool_calls
-        self.latency_seconds += response.latency_seconds or 0.0
-        self.usages.append(response.usage)
-        if response.usage.estimated_model_cost_usd is not None:
-            self.estimated_model_cost_usd += Decimal(str(response.usage.estimated_model_cost_usd))
-        else:
-            self.model_cost_complete = False
+        self.record(
+            usage=response.usage,
+            attempts=response.attempts,
+            tool_calls=response.tool_calls,
+            latency_seconds=response.latency_seconds,
+        )
 
     def consume_failure(self, failure: DiscoveryProviderFailure) -> None:
-        if failure.attempts > self.budget.max_model_calls - self.model_calls:
-            raise ValueError("Provider failure exceeded the supplied model-call budget.")
-        if failure.tool_calls > self.remaining_web_search_calls:
-            raise ValueError("Provider failure exceeded the supplied web-search budget.")
-        self.model_calls += failure.attempts
-        self.web_search_calls += failure.tool_calls
-        self.latency_seconds += failure.latency_seconds or 0.0
-        self.usages.append(failure.usage)
-        self.failure_codes.append(failure.failure_code)
-        if failure.usage.estimated_model_cost_usd is not None:
-            self.estimated_model_cost_usd += Decimal(str(failure.usage.estimated_model_cost_usd))
-        else:
-            self.model_cost_complete = False
+        self.in_flight = False
+        self.record(
+            usage=failure.usage,
+            attempts=failure.attempts,
+            tool_calls=failure.tool_calls,
+            latency_seconds=failure.latency_seconds,
+            failure=failure,
+        )
+
+    def local_failure(self, stage: DiscoveryStage, reason: DiscoveryFailureReason) -> None:
+        self.stage = stage
+        self.consume_failure(
+            DiscoveryProviderFailure(
+                "invalid_response",
+                attempts=0,
+                tool_calls=0,
+                tool_calls_complete=True,
+                category="local_validation",
+                reason=reason,
+                usage=TokenUsage(
+                    input_tokens=0,
+                    cached_input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    estimated_model_cost_usd=0,
+                ),
+            )
+        )
 
     def usage(self) -> DiscoveryBudgetUsage:
         return DiscoveryBudgetUsage(
@@ -179,6 +330,54 @@ class _BudgetTracker:
             web_search_calls=self.web_search_calls,
             estimated_model_cost_usd=self.estimated_model_cost_usd,
             model_cost_complete=self.model_cost_complete,
+            completed_model_calls=sum(item.completed_attempts for item in self.operations),
+            attempts_complete=all(item.attempts_complete for item in self.operations),
+            web_search_calls_complete=all(item.tool_calls_complete for item in self.operations),
+        )
+
+    def diagnostics(
+        self,
+        model_id: str | None,
+        input_count: int,
+        result_count: int,
+        status: Literal["success", "partial", "fallback", "failed"],
+    ) -> OperationalDiagnostics:
+        usage = safe_usage(aggregate_token_usage(self.usages))
+        failures = [item for item in self.operations if item.failure_code is not None]
+        return OperationalDiagnostics(
+            stage="complementary_discovery",
+            model_id=model_id,
+            status=status,
+            attempts=self.model_calls,
+            provider_calls=self.model_calls,
+            attempts_complete=all(item.attempts_complete for item in self.operations),
+            input_count=input_count,
+            result_count=result_count,
+            latency_seconds=(
+                self.latency_seconds
+                if all(
+                    item.latency_seconds is not None for item in self.operations if item.attempts
+                )
+                else None
+            ),
+            tool_calls=(
+                self.web_search_calls
+                if any(item.tool_calls is not None for item in self.operations)
+                else None
+            ),
+            input_tokens=usage.input_tokens,
+            cached_input_tokens=usage.cached_input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            estimated_model_cost_usd=(
+                Decimal(str(usage.estimated_model_cost_usd))
+                if usage.estimated_model_cost_usd is not None
+                else None
+            ),
+            usage_complete=bool(self.operations)
+            and all(item.usage_complete for item in self.operations),
+            failure_code=failures[0].failure_code if failures else None,
+            failure_category=failures[0].failure_category if failures else None,
         )
 
 
@@ -192,6 +391,60 @@ async def run_adaptive_discovery(
     budget: DiscoveryBudget,
     observed_at: datetime,
     discovery_source_id: str = "adaptive-discovery",
+    on_failure: Callable[[OperationalDiagnostics, AdaptiveDiscoverySummary], None] | None = None,
+) -> AdaptiveDiscoveryOutcome:
+    tracker = _BudgetTracker(budget)
+    try:
+        return await _run_adaptive_discovery(
+            scope,
+            collection,
+            planner,
+            researcher,
+            verifier,
+            budget=budget,
+            observed_at=observed_at,
+            discovery_source_id=discovery_source_id,
+            tracker=tracker,
+        )
+    except BaseException as exc:
+        code, category = classify_failure(exc)
+        pending = tracker.in_flight
+        tracker.consume_failure(
+            DiscoveryProviderFailure(
+                code,
+                category=category,
+                reason="local_invariant" if category == "local_invariant" else None,
+                attempts=int(pending),
+                attempts_complete=not pending,
+                latency_seconds=monotonic() - tracker.call_started if pending else 0.0,
+            )
+        )
+        if on_failure is not None:
+            on_failure(
+                tracker.diagnostics(None, len(collection.opportunities), 0, "failed"),
+                AdaptiveDiscoverySummary(
+                    stop_reason="provider_failure",
+                    budget=budget,
+                    usage=tracker.usage(),
+                    waves=tuple(tracker.wave_records),
+                    source_leads=tuple(tracker.source_leads.values()),
+                    operations=tuple(tracker.operations),
+                ),
+            )
+        raise
+
+
+async def _run_adaptive_discovery(
+    scope: ResearchScope,
+    collection: RegionalCollectionBatch,
+    planner: DiscoveryPlanner,
+    researcher: DiscoveryResearcher,
+    verifier: DiscoveryVerifier,
+    *,
+    budget: DiscoveryBudget,
+    observed_at: datetime,
+    discovery_source_id: str,
+    tracker: _BudgetTracker,
 ) -> AdaptiveDiscoveryOutcome:
     """Run bounded discovery waves until coverage, yield, or budget says to stop."""
     if observed_at.utcoffset() is None:
@@ -202,9 +455,8 @@ async def run_adaptive_discovery(
     current = collection.opportunities
     initial_ids = {item.opportunity_id for item in current}
     exclusions = list(collection.exclusions)
-    source_leads: dict[str, SourceLead] = {}
-    wave_records: list[DiscoveryWaveRecord] = []
-    tracker = _BudgetTracker(budget)
+    source_leads = tracker.source_leads
+    wave_records = tracker.wave_records
     verified_total = 0
     provider_failure_seen = False
     stop_reason: DiscoveryStopReason = "max_waves"
@@ -219,14 +471,17 @@ async def run_adaptive_discovery(
             coverage=build_coverage_snapshot(scope, collection.coverage, current),
             existing_opportunities=current,
         )
+        tracker.begin("planning", wave)
         try:
             planned = await planner.plan(context)
         except DiscoveryProviderFailure as exc:
             tracker.consume_failure(exc)
+            tracker.check_bounds()
             provider_failure_seen = True
             stop_reason = "provider_failure"
             break
         tracker.consume_response(planned)
+        tracker.check_bounds()
         plan = planned.value
 
         if not plan.should_continue:
@@ -242,11 +497,12 @@ async def run_adaptive_discovery(
         wave_provider_failure = False
         source_leads_before = len(source_leads)
 
-        for task in plan.tasks:
+        for task_number, task in enumerate(plan.tasks, 1):
             if not tracker.can_model_call() or tracker.remaining_web_search_calls <= 0:
                 stop_reason = "budget_exhausted"
                 break
             planned_task_ids.append(task.task_id)
+            tracker.begin("research", wave, task_number)
             try:
                 researched = await researcher.research(
                     context,
@@ -255,15 +511,17 @@ async def run_adaptive_discovery(
                 )
             except DiscoveryProviderFailure as exc:
                 tracker.consume_failure(exc)
+                tracker.check_bounds()
                 provider_failure_seen = wave_provider_failure = True
-                continue
+                break
             tracker.consume_response(researched)
+            tracker.check_bounds()
             try:
                 _validate_research_result(task, researched.value)
             except ValueError:
-                tracker.failure_codes.append("invalid_response")
+                tracker.local_failure("local_validation", "local_result_invalid")
                 provider_failure_seen = wave_provider_failure = True
-                continue
+                break
             wave_candidates.extend(researched.value.candidates)
             for lead in researched.value.source_leads:
                 source_leads.setdefault(str(lead.url), lead)
@@ -272,11 +530,12 @@ async def run_adaptive_discovery(
             break
 
         verified_candidates: list[DiscoveredEventCandidate] = []
-        if wave_candidates:
+        if wave_candidates and not wave_provider_failure:
             if not tracker.can_model_call() or tracker.remaining_web_search_calls <= 0:
                 stop_reason = "budget_exhausted"
                 break
             unique_candidates = _unique_candidates(tuple(wave_candidates))
+            tracker.begin("verification", wave)
             try:
                 verified = await verifier.verify(
                     context,
@@ -285,14 +544,16 @@ async def run_adaptive_discovery(
                 )
             except DiscoveryProviderFailure as exc:
                 tracker.consume_failure(exc)
+                tracker.check_bounds()
                 provider_failure_seen = wave_provider_failure = True
                 verified = None
             if verified is not None:
                 tracker.consume_response(verified)
+                tracker.check_bounds()
                 try:
                     _validate_verification(unique_candidates, verified.value)
                 except ValueError:
-                    tracker.failure_codes.append("invalid_response")
+                    tracker.local_failure("local_validation", "local_result_invalid")
                     provider_failure_seen = wave_provider_failure = True
                     verified = None
             if verified is not None:
@@ -304,6 +565,7 @@ async def run_adaptive_discovery(
 
         materialized: list[RegionalOpportunity] = []
         for candidate in verified_candidates:
+            tracker.stage = "materialization"
             try:
                 materialized.append(
                     materialize_discovered_event(
@@ -315,7 +577,7 @@ async def run_adaptive_discovery(
                 )
             except ValueError:
                 provider_failure_seen = wave_provider_failure = True
-                tracker.failure_codes.append("invalid_response")
+                tracker.local_failure("materialization", "materialization_invalid")
 
         verified_total += len(materialized)
         before_ids = {item.opportunity_id for item in current}
@@ -337,11 +599,11 @@ async def run_adaptive_discovery(
             )
         )
 
-        if incremental == 0:
-            stop_reason = "no_incremental_candidates"
-            break
         if wave_provider_failure:
             stop_reason = "provider_failure"
+            break
+        if incremental == 0:
+            stop_reason = "no_incremental_candidates"
             break
         if not tracker.can_model_call():
             stop_reason = "budget_exhausted"
@@ -350,7 +612,6 @@ async def run_adaptive_discovery(
         stop_reason = "max_waves"
 
     new_opportunities = tuple(item for item in current if item.opportunity_id not in initial_ids)
-    usage = aggregate_token_usage(tracker.usages)
     status: Literal["success", "partial", "fallback"] = (
         "fallback"
         if provider_failure_seen and not new_opportunities
@@ -368,7 +629,6 @@ async def run_adaptive_discovery(
     failure_code = tracker.failure_codes[0] if tracker.failure_codes else None
     models = {planner.model_id, researcher.model_id, verifier.model_id}
     model_id = next(iter(models)) if len(models) == 1 else None
-    usage_complete = bool(tracker.usages) and all(_usage_complete(item) for item in tracker.usages)
 
     return AdaptiveDiscoveryOutcome(
         opportunities=current,
@@ -383,26 +643,8 @@ async def run_adaptive_discovery(
             result_count=verified_total if coverage_status != "failed" else None,
             failure_code=failure_code if coverage_status in ("partial", "failed") else None,
         ),
-        diagnostics=OperationalDiagnostics(
-            stage="complementary_discovery",
-            model_id=model_id,
-            status=status,
-            attempts=tracker.model_calls,
-            input_count=len(collection.opportunities),
-            result_count=len(new_opportunities),
-            latency_seconds=tracker.latency_seconds,
-            tool_calls=tracker.web_search_calls,
-            input_tokens=usage.input_tokens,
-            cached_input_tokens=usage.cached_input_tokens,
-            output_tokens=usage.output_tokens,
-            total_tokens=usage.total_tokens,
-            estimated_model_cost_usd=(
-                Decimal(str(usage.estimated_model_cost_usd))
-                if usage.estimated_model_cost_usd is not None
-                else None
-            ),
-            usage_complete=usage_complete,
-            failure_code=failure_code,
+        diagnostics=tracker.diagnostics(
+            model_id, len(collection.opportunities), len(new_opportunities), status
         ),
         summary=AdaptiveDiscoverySummary(
             stop_reason=stop_reason,
@@ -410,6 +652,7 @@ async def run_adaptive_discovery(
             usage=tracker.usage(),
             waves=tuple(wave_records),
             source_leads=tuple(source_leads.values()),
+            operations=tuple(tracker.operations),
         ),
     )
 

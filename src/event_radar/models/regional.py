@@ -482,6 +482,7 @@ FailureCategory = Literal[
     "sdk_finish_reason",
     "response_schema",
     "response_behavior",
+    "tool_behavior",
     "local_validation",
     "local_invariant",
     "timeout",
