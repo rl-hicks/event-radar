@@ -39,6 +39,7 @@ from event_radar.models.regional_discovery import (
     DiscoveryFailureReason,
     DiscoveryOperation,
     DiscoveryPlan,
+    DiscoveryPlanningDecision,
     DiscoveryResearchResult,
     DiscoveryStage,
     DiscoveryStopReason,
@@ -196,6 +197,7 @@ class _BudgetTracker:
         )
 
     operations: list[DiscoveryOperation] = field(default_factory=list)
+    planning_decisions: list[DiscoveryPlanningDecision] = field(default_factory=list)
     wave_records: list[DiscoveryWaveRecord] = field(default_factory=list)
     source_leads: dict[str, SourceLead] = field(default_factory=dict)
     stage: DiscoveryStage = "planning"
@@ -429,6 +431,7 @@ async def run_adaptive_discovery(
                     waves=tuple(tracker.wave_records),
                     source_leads=tuple(tracker.source_leads.values()),
                     operations=tuple(tracker.operations),
+                    planning_decisions=tuple(tracker.planning_decisions),
                 ),
             )
         raise
@@ -481,8 +484,20 @@ async def _run_adaptive_discovery(
             stop_reason = "provider_failure"
             break
         tracker.consume_response(planned)
+        # Revalidate even injected providers: trusted model_copy/construct bypasses
+        # must not admit unbounded or extra fields into retained public evidence.
+        try:
+            decision = DiscoveryPlanningDecision.model_validate(
+                {"wave": wave, "plan": planned.value.model_dump(mode="json")}
+            )
+        except ValueError:
+            tracker.local_failure("local_validation", "local_result_invalid")
+            provider_failure_seen = True
+            stop_reason = "provider_failure"
+            break
+        tracker.planning_decisions.append(decision)
         tracker.check_bounds()
-        plan = planned.value
+        plan = decision.plan
 
         if not plan.should_continue:
             stop_reason = "planner_stopped"
@@ -653,6 +668,7 @@ async def _run_adaptive_discovery(
             waves=tuple(wave_records),
             source_leads=tuple(source_leads.values()),
             operations=tuple(tracker.operations),
+            planning_decisions=tuple(tracker.planning_decisions),
         ),
     )
 

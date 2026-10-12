@@ -150,28 +150,33 @@ class DiscoveryContext(DiscoveryContract):
     existing_opportunities: tuple[RegionalOpportunity, ...]
 
 
+# Planning prose is public research explanation, not prompts or provider envelopes.
+PlanningText = Annotated[Text, Field(max_length=2048)]
+PlanningLabel = Annotated[Text, Field(max_length=128)]
+
+
 class CoverageGap(DiscoveryContract):
     gap_id: Identifier
     dimension: GapDimension
-    description: Text
-    rationale: Text
+    description: PlanningText
+    rationale: PlanningText
     priority: GapPriority
 
 
 class DiscoveryTask(DiscoveryContract):
     task_id: Identifier
-    gap_ids: tuple[Identifier, ...] = Field(min_length=1)
-    search_goal: Text
-    target_area: Text | None = None
+    gap_ids: tuple[Identifier, ...] = Field(min_length=1, max_length=32)
+    search_goal: PlanningText
+    target_area: PlanningLabel | None = None
     target_date: date | None = None
-    opportunity_type: Text | None = None
+    opportunity_type: PlanningLabel | None = None
 
 
 class DiscoveryPlan(DiscoveryContract):
-    gaps: tuple[CoverageGap, ...]
-    tasks: tuple[DiscoveryTask, ...]
+    gaps: tuple[CoverageGap, ...] = Field(max_length=32)
+    tasks: tuple[DiscoveryTask, ...] = Field(max_length=32)
     should_continue: StrictBool
-    rationale: Text
+    rationale: PlanningText
 
     @model_validator(mode="after")
     def validate_plan(self) -> "DiscoveryPlan":
@@ -187,6 +192,13 @@ class DiscoveryPlan(DiscoveryContract):
         if not self.should_continue and self.tasks:
             raise ValueError("A stopped discovery plan cannot contain research tasks.")
         return self
+
+
+class DiscoveryPlanningDecision(DiscoveryContract):
+    """Accepted plan for a planning wave, including waves that stop before research."""
+
+    wave: Annotated[int, Field(ge=1, le=20, strict=True)]
+    plan: DiscoveryPlan
 
 
 class DiscoveryResearchRequest(DiscoveryContract):
@@ -326,3 +338,16 @@ class AdaptiveDiscoverySummary(DiscoveryContract):
     waves: tuple[DiscoveryWaveRecord, ...]
     source_leads: tuple[SourceLead, ...]
     operations: tuple[DiscoveryOperation, ...] = ()
+
+    # None means evidence was not recorded (legacy); () means no plan was accepted.
+    planning_decisions: tuple[DiscoveryPlanningDecision, ...] | None = Field(
+        default=None, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def ordered_planning_decisions(self) -> "AdaptiveDiscoverySummary":
+        if self.planning_decisions is not None:
+            waves = [decision.wave for decision in self.planning_decisions]
+            if waves != sorted(set(waves)) or any(w > self.budget.max_waves for w in waves):
+                raise ValueError("Planning decisions require unique ordered waves within budget.")
+        return self
