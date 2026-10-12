@@ -8,6 +8,7 @@ on:
       - main
       # Narrow pre-merge verification trigger; remove when this branch retires.
       - codex/e0-wp7-ci-regression
+      - e2/first-user-vertical-slice
 
 permissions:
   contents: read
@@ -93,6 +94,15 @@ jobs:
           })
           required.add(("tests.test_shared_schedule_integration",
                         "test_scheduled_concurrency_and_no_refresh"))
+          required.update({
+              ("tests.test_product_context_integration", name)
+              for name in (
+                  "test_signed_two_user_context_api",
+                  "test_concurrent_context_updates",
+                  "test_context_history_and_database_immutability",
+                  "test_context_does_not_change_shared_evidence",
+              )
+          })
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()

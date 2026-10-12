@@ -25,6 +25,7 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
             "regional_universes",
             "regional_universe_snapshots",
             "regional_research_runs",
+            "user_context_revisions",
             "alembic_version",
         }
         columns = {column["name"]: column for column in inspector.get_columns("app_users")}
@@ -39,10 +40,11 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
             assert columns[name]["default"] == "now()"
         with engine.connect() as connection:
             context = MigrationContext.configure(connection, opts={"compare_server_default": True})
-            assert context.get_current_revision() == "0002_regional_universes"
+            assert context.get_current_revision() == "0003_user_context"
             assert compare_metadata(context, Base.metadata) == []
         command.downgrade(config, "base")
         inspector = inspect(engine)
+        assert not inspector.has_table("user_context_revisions")
         assert not inspector.has_table("app_users")
         assert not inspector.has_table("regional_universes")
         assert not inspector.has_table("regional_universe_snapshots")

@@ -11,14 +11,16 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException
 from starlette.middleware.base import RequestResponseEndpoint
-from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
 from event_radar.api.config import web_origins
+from event_radar.api.contexts import router as context_router
+from event_radar.api.cors import ProductCORSMiddleware
 from event_radar.api.dependencies import DatabaseResources
 from event_radar.api.errors import DatabaseUnavailable, error_response
 from event_radar.api.routes import router
 from event_radar.auth.config import AuthUnavailable
+from event_radar.db.contexts import ContextConflict, ContextCorrupt
 
 logger = logging.getLogger("event_radar.api")
 
@@ -56,6 +58,16 @@ def create_app() -> FastAPI:
         code, message = errors.get(exc.status_code, ("request_error", "Request failed."))
         headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
         return error_response(request, exc.status_code, code, message, headers=headers)
+
+    @app.exception_handler(ContextConflict)
+    async def context_conflict(request: Request, exc: ContextConflict) -> Response:
+        return error_response(
+            request, 409, "context_conflict", "Context changed; read it again before saving."
+        )
+
+    @app.exception_handler(ContextCorrupt)
+    async def context_corrupt(request: Request, exc: ContextCorrupt) -> Response:
+        return error_response(request, 503, "context_unavailable", "Context unavailable.")
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> Response:
@@ -98,12 +110,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(router)
+    app.include_router(context_router)
     # Outer CORS middleware also applies to sanitized error responses.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=web_origins(),
-        allow_credentials=False,
-        allow_methods=["GET"],
-        allow_headers=["Authorization"],
-    )
+    app.add_middleware(ProductCORSMiddleware, origins=web_origins())
     return app

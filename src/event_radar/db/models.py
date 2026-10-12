@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     text,
@@ -152,3 +153,24 @@ class RegionalResearchRun(Base):
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     diagnostics_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     discovery_summary: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+
+
+class UserContextRevision(Base):
+    """Append-only private history. Highest revision is the active context."""
+
+    __tablename__ = "user_context_revisions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "revision", name="uq_user_context_revision"),
+        CheckConstraint("revision > 0", name="ck_user_context_revision_positive"),
+    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("app_users.id", name="fk_context_user"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    context_payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
+    )

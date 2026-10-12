@@ -94,7 +94,7 @@ def main():
             "55433",
         )
         ready()
-        local(str(ROOT / ".venv/bin/alembic"), "upgrade", "head")
+        local(str(ROOT / ".venv/bin/alembic"), "upgrade", "0002_regional_universes")
         print(local(str(ROOT / ".venv/bin/alembic"), "current"))
         snapshot = local(
             python,

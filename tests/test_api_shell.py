@@ -56,6 +56,7 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
             "regional_universes",
             "regional_universe_snapshots",
             "regional_research_runs",
+            "user_context_revisions",
         }
         app = create_app()
         assert app.state.database._engine is None
