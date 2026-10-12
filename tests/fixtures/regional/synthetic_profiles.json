@@ -1,0 +1,29 @@
+[
+  {
+    "label": "synthetic-budget-family",
+    "interests": [
+      "children's activities",
+      "crafts"
+    ],
+    "maximum_cost_usd": 0,
+    "maximum_drive_minutes": 15,
+    "hiking": "easy",
+    "available": [
+      "Saturday morning"
+    ]
+  },
+  {
+    "label": "synthetic-distance-hiker",
+    "interests": [
+      "long hikes",
+      "live music"
+    ],
+    "maximum_cost_usd": 150,
+    "maximum_drive_minutes": 120,
+    "hiking": "hard",
+    "available": [
+      "Friday evening",
+      "Sunday"
+    ]
+  }
+]

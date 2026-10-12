@@ -1,0 +1,68 @@
+name: Product Shared Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Initial supported region
+        type: choice
+        options: [sonoma-county-ca]
+        required: true
+      weekend:
+        description: Explicit Friday (YYYY-MM-DD)
+        type: string
+        required: true
+      as_of:
+        description: Explicit aware ISO timestamp
+        type: string
+        required: true
+      policy_version:
+        description: Synthetic policy version (must start with synthetic-)
+        type: string
+        default: synthetic-wp7
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-research-${{ inputs.region }}-${{ inputs.weekend }}-${{ inputs.policy_version }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-research:
+    name: Synthetic regional research (no paid providers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://event_radar_test:event_radar_test_local@127.0.0.1:55432/event_radar_test
+      DATABASE_URL: postgresql+psycopg://event_radar_test:event_radar_test_local@127.0.0.1:55432/event_radar_test
+      RESEARCH_REGION: ${{ inputs.region }}
+      RESEARCH_WEEKEND: ${{ inputs.weekend }}
+      RESEARCH_AS_OF: ${{ inputs.as_of }}
+      RESEARCH_POLICY: ${{ inputs.policy_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.28"
+          python-version: "3.13"
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      - name: Start disposable PostgreSQL
+        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 postgres_test
+      - name: Migrate only the disposable service
+        run: uv run alembic upgrade head
+      - name: Research and replay the explicit synthetic weekend
+        run: |
+          uv run python -m event_radar.shared_worker --synthetic \
+            --region "$RESEARCH_REGION" --weekend "$RESEARCH_WEEKEND" \
+            --as-of "$RESEARCH_AS_OF" --policy-version "$RESEARCH_POLICY"
+          uv run python -m event_radar.shared_worker --synthetic \
+            --region "$RESEARCH_REGION" --weekend "$RESEARCH_WEEKEND" \
+            --as-of "$RESEARCH_AS_OF" --policy-version "$RESEARCH_POLICY"
+      - name: Stop disposable PostgreSQL
+        if: always()
+        run: docker compose -f docker-compose.test.yml down

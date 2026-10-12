@@ -1,0 +1,22 @@
+# Retained public research only. Never use for destructive test fixtures.
+name: event-radar-evidence
+services:
+  evidence:
+    image: postgres:17
+    container_name: event-radar-development-evidence
+    environment:
+      POSTGRES_DB: event_radar_evidence
+      POSTGRES_USER: event_radar_evidence
+      POSTGRES_PASSWORD: ${EVIDENCE_DB_PASSWORD:?Set a local-only evidence database password}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - evidence_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U event_radar_evidence -d event_radar_evidence"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+volumes:
+  evidence_data:
+    name: event-radar-development-evidence-data

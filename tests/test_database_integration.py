@@ -20,7 +20,13 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
     for _ in range(2):
         command.upgrade(config, "head")
         inspector = inspect(engine)
-        assert set(inspector.get_table_names()) == {"app_users", "alembic_version"}
+        assert set(inspector.get_table_names()) == {
+            "app_users",
+            "regional_universes",
+            "regional_universe_snapshots",
+            "regional_research_runs",
+            "alembic_version",
+        }
         columns = {column["name"]: column for column in inspector.get_columns("app_users")}
         assert set(columns) == {"id", "created_at", "updated_at"}
         assert isinstance(columns["id"]["type"], UUID)
@@ -33,10 +39,14 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
             assert columns[name]["default"] == "now()"
         with engine.connect() as connection:
             context = MigrationContext.configure(connection, opts={"compare_server_default": True})
-            assert context.get_current_revision() == "0001_app_users"
+            assert context.get_current_revision() == "0002_regional_universes"
             assert compare_metadata(context, Base.metadata) == []
         command.downgrade(config, "base")
-        assert not inspect(engine).has_table("app_users")
+        inspector = inspect(engine)
+        assert not inspector.has_table("app_users")
+        assert not inspector.has_table("regional_universes")
+        assert not inspector.has_table("regional_universe_snapshots")
+        assert not inspector.has_table("regional_research_runs")
 
 
 def test_identity_persistence_and_session_lifecycle(database: tuple[Engine, Config]) -> None:

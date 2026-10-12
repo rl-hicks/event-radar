@@ -130,6 +130,7 @@ class Hike(BaseModel):
     park_or_area: str = Field(min_length=1)
     managing_agency: str = Field(min_length=1)
     region: str = Field(min_length=1)
+    county: str = Field(min_length=1)
     nearest_city: str = Field(min_length=1)
 
     trailhead_name: str = Field(min_length=1)

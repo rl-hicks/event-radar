@@ -31,7 +31,13 @@ def database(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine, Config]]
         with engine.connect() as connection:
             identity = connection.execute(text("SELECT current_database(), current_user")).one()
             assert tuple(identity) == ("event_radar_test", "event_radar_test")
-            assert set(inspect(connection).get_table_names()) <= {"app_users", "alembic_version"}
+            assert set(inspect(connection).get_table_names()) <= {
+                "app_users",
+                "regional_universes",
+                "regional_universe_snapshots",
+                "regional_research_runs",
+                "alembic_version",
+            }
         # The URL and live identity guards precede every destructive test migration.
         command.downgrade(config, "base")
         assert set(inspect(engine).get_table_names()) <= {"alembic_version"}

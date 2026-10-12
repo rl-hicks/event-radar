@@ -58,6 +58,8 @@ jobs:
           docker compose -f docker-compose.test.yml exec -T postgres_test pg_isready -U event_radar_test -d event_radar_test
       - name: Complete Python suite with PostgreSQL
         run: uv run pytest -ra --junitxml="$RUNNER_TEMP/python-results.xml"
+      - name: Isolated durable evidence restart regression
+        run: sudo python3 scripts/test_evidence_restart.py
       - name: Require live PostgreSQL evidence
         env:
           TEST_REPORT: ${{ runner.temp }}/python-results.xml
@@ -73,6 +75,24 @@ jobs:
               ("tests.test_api_integration", "test_concurrent_identity_creation"),
               ("tests.test_supabase_integration", "test_signed_tokens_through_api_postgres"),
           }
+          required.update({
+              ("tests.test_shared_worker_integration", "test_full_worker_persistence_replay_and_read_only_reuse"),
+              ("tests.test_shared_worker_integration", "test_concurrent_same_key_and_distinct_key_isolation"),
+              ("tests.test_shared_worker_integration", "test_partial_and_failed_refresh_preserve_last_good"),
+              ("tests.test_shared_worker_integration", "test_process_death_releases_claim_and_recovers_committed_attempt"),
+          })
+          required.update({
+              ("tests.test_shared_consumer_reuse",
+               f"test_two_distinct_consumers_reuse_one_snapshot[{quality}]")
+              for quality in ("success", "partial")
+          })
+          required.update({
+              ("tests.test_shared_schedule_integration",
+               f"test_scheduled_attempt_is_never_automatically_retried[{mode}]")
+              for mode in ("success", "partial", "failed", "abandoned")
+          })
+          required.add(("tests.test_shared_schedule_integration",
+                        "test_scheduled_concurrency_and_no_refresh"))
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()

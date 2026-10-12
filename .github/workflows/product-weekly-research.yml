@@ -1,0 +1,114 @@
+name: Product Weekly Research (activation pending)
+
+on:
+  workflow_dispatch:
+    inputs:
+      weekend:
+        description: Explicit upcoming Pacific Friday (YYYY-MM-DD)
+        type: string
+        required: true
+# Activation requires separate owner approval and a reviewed commit:
+#  schedule:
+#    - cron: '15 12 * * 4'
+#      timezone: America/Los_Angeles
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      key: ${{ steps.plan.outputs.key }}
+      weekend: ${{ steps.plan.outputs.weekend }}
+      triggered_at: ${{ steps.anchor.outputs.triggered_at }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.28"
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - name: Immutable workflow creation time (also on reruns)
+        id: anchor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          echo "triggered_at=$created" >> "$GITHUB_OUTPUT"
+      - name: Resolve identity without research or provider secrets
+        id: plan
+        env:
+          TRIGGERED_AT: ${{ steps.anchor.outputs.triggered_at }}
+          REQUESTED_FRIDAY: ${{ inputs.weekend }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ -n "$REQUESTED_FRIDAY" ]]; then args+=(--weekend "$REQUESTED_FRIDAY"); fi
+          uv run python -m event_radar.shared_schedule plan --config config/shared-research-envelope.json --triggered-at "$TRIGGERED_AT" "${args[@]}" > schedule-plan.json
+          python - <<'PY'
+          import json, os
+          plan = json.load(open("schedule-plan.json"))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+              for field in ("key", "weekend"):
+                  stream.write(f"{field}={plan[field]}\n")
+          PY
+
+  research:
+    # INERT: do not remove this hard gate without the activation approvals in the runbook.
+    if: ${{ false }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: shared-regional-research
+    concurrency:
+      group: weekly-research-${{ needs.plan.outputs.key }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.28"
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - name: Install approved database CA for verify-full
+        env:
+          RESEARCH_DB_CA: ${{ secrets.EVENT_RADAR_RESEARCH_DATABASE_CA }}
+        run: |
+          set +x
+          test -n "$RESEARCH_DB_CA"
+          install -d -m 700 "$HOME/.postgresql"
+          (umask 077; printf '%s\n' "$RESEARCH_DB_CA" > "$HOME/.postgresql/root.crt")
+      - name: One guarded shared worker attempt
+        env:
+          EVENT_RADAR_SCHEDULE_APPROVED: ${{ vars.EVENT_RADAR_SCHEDULE_APPROVED }}
+          EVENT_RADAR_RESEARCH_EXPECTED_HOST: ${{ vars.EVENT_RADAR_RESEARCH_EXPECTED_HOST }}
+          EVENT_RADAR_RESEARCH_EXPECTED_DATABASE: ${{ vars.EVENT_RADAR_RESEARCH_EXPECTED_DATABASE }}
+          EVENT_RADAR_RESEARCH_EXPECTED_USER: ${{ vars.EVENT_RADAR_RESEARCH_EXPECTED_USER }}
+          EVENT_RADAR_RESEARCH_DATABASE_URL: ${{ secrets.EVENT_RADAR_RESEARCH_DATABASE_URL }}
+          EVENT_RADAR_RESEARCH_OPENAI_API_KEY: ${{ secrets.EVENT_RADAR_RESEARCH_OPENAI_API_KEY }}
+          TRIGGERED_AT: ${{ needs.plan.outputs.triggered_at }}
+          FRIDAY: ${{ needs.plan.outputs.weekend }}
+        run: |
+          set +x
+          uv run python -m event_radar.shared_schedule execute --config config/shared-research-envelope.json --triggered-at "$TRIGGERED_AT" --weekend "$FRIDAY" --acknowledge-live-run
+      - name: Retain only explicit public evidence, never environment or raw logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: regional-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/development-evidence/schedule-*.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Operator failure signal
+        if: ${{ failure() || cancelled() }}
+        run: |
+          echo "::error::Shared research needs operator review. Do not retry provider work automatically."
+          echo "Shared research failed, degraded, blocked, or evidence is unavailable. Inspect persisted run evidence; no personalized packet was generated." >> "$GITHUB_STEP_SUMMARY"

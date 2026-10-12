@@ -1,0 +1,290 @@
+{
+  "schema_version": "1",
+  "scope": {
+    "region": {
+      "region_id": "sonoma-county-ca",
+      "country_code": "US",
+      "subdivision_code": "CA",
+      "county": "Sonoma County",
+      "timezone": "America/Los_Angeles"
+    },
+    "window": {
+      "friday": "2026-10-02",
+      "timezone": "America/Los_Angeles"
+    },
+    "research_policy_version": "regional-v1",
+    "as_of": "2026-10-02T13:00:00-07:00"
+  },
+  "opportunities": [
+    {
+      "opportunity_id": "community-workshop",
+      "kind": "event",
+      "title": "Synthetic Community Workshop",
+      "location": {
+        "country_code": "US",
+        "subdivision_code": "CA",
+        "county": "Sonoma County",
+        "city": "Petaluma",
+        "venue": "Synthetic Community Hall",
+        "evidence_ids": [
+          "organizer"
+        ]
+      },
+      "evidence": [
+        {
+          "evidence_id": "organizer",
+          "source_id": "public-feed",
+          "url": "https://example.org/organizer",
+          "source_record_id": "organizer",
+          "observed_at": "2026-10-02T12:00:00-07:00",
+          "published_at": null,
+          "claims": [
+            "existence",
+            "location",
+            "description",
+            "price",
+            "access"
+          ],
+          "summary": "Synthetic public listing evidence.",
+          "confidence": "high",
+          "occurrence_start": null,
+          "occurrence_end": null
+        },
+        {
+          "evidence_id": "calendar",
+          "source_id": "public-calendar",
+          "url": "https://example.org/calendar",
+          "source_record_id": "calendar",
+          "observed_at": "2026-10-02T12:00:00-07:00",
+          "published_at": null,
+          "claims": [
+            "time",
+            "price"
+          ],
+          "summary": "Synthetic public listing evidence.",
+          "confidence": "high",
+          "occurrence_start": "2026-10-03T14:00:00-07:00",
+          "occurrence_end": "2026-10-03T16:00:00-07:00"
+        }
+      ],
+      "semantics": [
+        {
+          "kind": "participation",
+          "description": "Participants work at shared tables with an instructor.",
+          "evidence_ids": [
+            "organizer"
+          ],
+          "confidence": "high"
+        }
+      ],
+      "categories": {
+        "state": "known",
+        "value": [],
+        "evidence_ids": [
+          "organizer"
+        ]
+      },
+      "occurrences": [
+        {
+          "occurrence_id": "workshop-saturday",
+          "start": "2026-10-03T14:00:00-07:00",
+          "end": "2026-10-03T16:00:00-07:00",
+          "location": {
+            "country_code": "US",
+            "subdivision_code": "CA",
+            "county": "Sonoma County",
+            "city": "Petaluma",
+            "venue": "Synthetic Community Hall",
+            "evidence_ids": [
+              "organizer"
+            ]
+          },
+          "evidence_ids": [
+            "calendar"
+          ],
+          "price": {
+            "state": "conflicting",
+            "quotes": [
+              {
+                "minimum": "0",
+                "maximum": "0",
+                "currency": "USD",
+                "details": "Organizer lists free admission.",
+                "evidence_ids": [
+                  "organizer"
+                ]
+              },
+              {
+                "minimum": "20",
+                "maximum": "20",
+                "currency": "USD",
+                "details": "Calendar lists a ticket charge.",
+                "evidence_ids": [
+                  "calendar"
+                ]
+              }
+            ]
+          },
+          "available": {
+            "state": "unknown",
+            "value": null,
+            "evidence_ids": []
+          }
+        }
+      ],
+      "route": null,
+      "access_open": {
+        "state": "unknown",
+        "value": null,
+        "evidence_ids": []
+      },
+      "unknowns": [
+        {
+          "kind": "price",
+          "detail": "Sources disagree; do not represent this as free."
+        }
+      ]
+    },
+    {
+      "opportunity_id": "synthetic-ridge-route",
+      "kind": "hike",
+      "title": "Synthetic Ridge Route",
+      "location": {
+        "country_code": "US",
+        "subdivision_code": "CA",
+        "county": "Sonoma County",
+        "city": "Petaluma",
+        "venue": "Synthetic Trailhead",
+        "evidence_ids": [
+          "park"
+        ]
+      },
+      "evidence": [
+        {
+          "evidence_id": "park",
+          "source_id": "public-catalog",
+          "url": "https://example.org/park",
+          "source_record_id": "park",
+          "observed_at": "2026-10-02T12:00:00-07:00",
+          "published_at": null,
+          "claims": [
+            "existence",
+            "location",
+            "route",
+            "description"
+          ],
+          "summary": "Synthetic public listing evidence.",
+          "confidence": "high",
+          "occurrence_start": null,
+          "occurrence_end": null
+        }
+      ],
+      "semantics": null,
+      "categories": {
+        "state": "unknown",
+        "value": null,
+        "evidence_ids": []
+      },
+      "occurrences": [],
+      "route": {
+        "distance_miles": "12",
+        "elevation_gain_ft": 3000,
+        "route_description": "A synthetic long ridge route; not filtered by fitness preference.",
+        "evidence_ids": [
+          "park"
+        ]
+      },
+      "access_open": {
+        "state": "unknown",
+        "value": null,
+        "evidence_ids": []
+      },
+      "unknowns": [
+        {
+          "kind": "access",
+          "detail": "Current closures, reservations and trail conditions have not been checked."
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "public-feed",
+      "channel": "fixed_feed",
+      "scope": "Synthetic county event feed",
+      "status": "success",
+      "observed_at": "2026-10-02T12:00:00-07:00",
+      "result_count": 1,
+      "failure_code": null
+    },
+    {
+      "source_id": "public-calendar",
+      "channel": "fixed_feed",
+      "scope": "Synthetic calendar",
+      "status": "partial",
+      "observed_at": "2026-10-02T12:00:00-07:00",
+      "result_count": 1,
+      "failure_code": "timeout"
+    },
+    {
+      "source_id": "public-catalog",
+      "channel": "hike_catalog",
+      "scope": "Synthetic county route catalog",
+      "status": "success",
+      "observed_at": "2026-10-02T12:00:00-07:00",
+      "result_count": 1,
+      "failure_code": null
+    },
+    {
+      "source_id": "complementary",
+      "channel": "complementary_discovery",
+      "scope": "Synthetic county search",
+      "status": "success",
+      "observed_at": "2026-10-02T12:00:00-07:00",
+      "result_count": 0,
+      "failure_code": null
+    },
+    {
+      "source_id": "weather",
+      "channel": "weather",
+      "scope": "Synthetic regional weather",
+      "status": "failed",
+      "observed_at": "2026-10-02T12:00:00-07:00",
+      "result_count": null,
+      "failure_code": "unavailable"
+    }
+  ],
+  "exclusions": [
+    {
+      "source_id": "public-calendar",
+      "source_record_id": "same-workshop",
+      "reason": "duplicate_occurrence",
+      "duplicate_of": "workshop-saturday"
+    }
+  ],
+  "diagnostics": [
+    {
+      "stage": "collection",
+      "status": "partial",
+      "attempts": 1,
+      "input_count": 3,
+      "result_count": 2,
+      "latency_seconds": 1.2,
+      "tool_calls": 0,
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "estimated_model_cost_usd": null,
+      "usage_complete": false,
+      "failure_code": "timeout",
+      "model_id": null
+    }
+  ],
+  "unknowns": [
+    {
+      "kind": "source_coverage",
+      "detail": "One calendar was partial and weather was unavailable; empty search is not county-wide completeness."
+    }
+  ]
+}
