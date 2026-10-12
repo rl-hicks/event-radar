@@ -81,6 +81,11 @@ jobs:
               ("tests.test_shared_worker_integration", "test_partial_and_failed_refresh_preserve_last_good"),
               ("tests.test_shared_worker_integration", "test_process_death_releases_claim_and_recovers_committed_attempt"),
           })
+          required.update({
+              ("tests.test_shared_consumer_reuse",
+               f"test_two_distinct_consumers_reuse_one_snapshot[{quality}]")
+              for quality in ("success", "partial")
+          })
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()
