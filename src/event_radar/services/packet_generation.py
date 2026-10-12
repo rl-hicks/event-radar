@@ -196,6 +196,7 @@ async def generate_packet(
                 context_hash=context.content_hash,
                 policy=policy,
                 prompt_hash=digest(PROMPT),
+                curation_status=response.result.status,
                 status=status,
                 created_at=completed,
                 recommendations=recommendations,

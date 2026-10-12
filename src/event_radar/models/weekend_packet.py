@@ -171,6 +171,7 @@ class WeekendPacket(ContextModel):
     context_hash: Digest
     policy: CurationPolicy
     prompt_hash: Digest
+    curation_status: Literal["success", "partial"]
     status: Literal["success", "partial"]
     created_at: AwareDatetime
     recommendations: Annotated[tuple[PacketRecommendation, ...], Field(max_length=18)]

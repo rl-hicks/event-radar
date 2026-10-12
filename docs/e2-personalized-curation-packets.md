@@ -81,7 +81,7 @@ usage unknown. No automatic retries or correction calls occur.
 
 `WeekendPacket` v1 stores account, packet/execution/curation IDs, region/weekend,
 snapshot/context UUIDs and hashes, research as-of/quality, full policy, prompt hash,
-creation time, success/partial status, recommendations with separate judgment/rationale/
+creation time, separate personalization and combined success/partial statuses, recommendations with separate judgment/rationale/
 source facts/unknowns, and safe usage. It contains no channel-specific message or binding.
 
 Migration `0004_weekend_packets` follows `0003_user_context`:

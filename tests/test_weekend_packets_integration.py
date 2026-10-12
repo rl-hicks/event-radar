@@ -103,6 +103,8 @@ async def test_two_authenticated_users_one_snapshot(setup, monkeypatch, caplog):
             assert response.headers["cache-control"] == "no-store"
             packet = response.json()
             packets.append(packet)
+            assert packet["curation_status"] == "success"
+            assert packet["research_quality"] == packet["status"] == "partial"
             assert packet["context_revision_id"] == str(contexts[index].revision_id)
             assert packet["context_hash"] == contexts[index].content_hash
             assert client.get(url, headers=headers[1 - index]).status_code == 404
@@ -410,6 +412,7 @@ async def test_full_success_and_personalization_partial(setup):
     with Session(engine) as session:
         assert read_packet(session, ids[0], success.packet_id).research_quality == "success"
         assert read_packet(session, ids[1], partial.packet_id).status == "partial"
+        assert read_packet(session, ids[1], partial.packet_id).curation_status == "partial"
 
 
 def test_simultaneous_database_claim(setup):

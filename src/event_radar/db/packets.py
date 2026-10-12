@@ -91,13 +91,18 @@ def read_packet(session: Session, authenticated_id: UUID, packet_id: UUID) -> We
             or job.policy_payload != packet.policy.model_dump(mode="json")
             or job.finished_at != packet.created_at
             or job.usage_payload != packet.usage.model_dump(mode="json")
-            or (snapshot.quality_status == "partial" and packet.status != "partial")
+            or packet.status
+            != (
+                "partial"
+                if "partial" in (snapshot.quality_status, packet.curation_status)
+                else "success"
+            )
         ):
             raise ValueError
         rebuilt = validate_result(
             request,
             CurationResult(
-                status=packet.status,
+                status=packet.curation_status,
                 recommendations=tuple(r.judgment for r in packet.recommendations),
             ),
         )
