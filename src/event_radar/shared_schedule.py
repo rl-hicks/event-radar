@@ -81,10 +81,11 @@ def database_preflight(engine: Engine, *, database: str, user: str) -> None:
             user,
         ):
             raise ValueError("Research database identity mismatch.")
-        # 0003 adds private context only; regional schema remains exactly compatible.
+        # 0003/0004 add private product state; regional schema remains compatible.
         if session.scalars(text("SELECT version_num FROM alembic_version")).all() not in (
             ["0002_regional_universes"],
             ["0003_user_context"],
+            ["0004_weekend_packets"],
         ):
             raise ValueError("Required migration missing; no automatic migrations.")
 

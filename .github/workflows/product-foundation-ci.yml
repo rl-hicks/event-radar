@@ -103,6 +103,16 @@ jobs:
                   "test_context_does_not_change_shared_evidence",
               )
           })
+          required.update({
+              ("tests.test_weekend_packets_integration", name)
+              for name in (
+                  "test_two_authenticated_users_one_snapshot",
+                  "test_concurrent_requests_one_call_and_replay",
+                  "test_context_changes_during_curation_and_new_revision",
+                  "test_packet_database_immutability_rls_and_integrity",
+                  "test_empty_packet_unknown_usage_and_independent_history",
+              )
+          })
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()

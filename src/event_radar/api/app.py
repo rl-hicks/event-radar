@@ -18,9 +18,11 @@ from event_radar.api.contexts import router as context_router
 from event_radar.api.cors import ProductCORSMiddleware
 from event_radar.api.dependencies import DatabaseResources
 from event_radar.api.errors import DatabaseUnavailable, error_response
+from event_radar.api.packets import router as packet_router
 from event_radar.api.routes import router
 from event_radar.auth.config import AuthUnavailable
 from event_radar.db.contexts import ContextConflict, ContextCorrupt
+from event_radar.db.packets import PacketCorrupt
 
 logger = logging.getLogger("event_radar.api")
 
@@ -65,6 +67,10 @@ def create_app() -> FastAPI:
             request, 409, "context_conflict", "Context changed; read it again before saving."
         )
 
+    @app.exception_handler(PacketCorrupt)
+    async def packet_corrupt(request: Request, exc: PacketCorrupt) -> Response:
+        return error_response(request, 503, "packet_unavailable", "Packet unavailable.")
+
     @app.exception_handler(ContextCorrupt)
     async def context_corrupt(request: Request, exc: ContextCorrupt) -> Response:
         return error_response(request, 503, "context_unavailable", "Context unavailable.")
@@ -92,6 +98,8 @@ def create_app() -> FastAPI:
         except Exception:
             # Do not log exception strings, traceback locals, bodies, or headers.
             response = error_response(request, 500, "internal_error", "Internal server error.")
+        if request.url.path.startswith("/api/me/packets"):
+            response.headers["Cache-Control"] = "no-store"
         route = request.scope.get("route")
         # Route templates avoid logging arbitrary secret-bearing paths or query strings.
         path = getattr(route, "path", "<unmatched>")
@@ -111,6 +119,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     app.include_router(context_router)
+    app.include_router(packet_router)
     # Outer CORS middleware also applies to sanitized error responses.
     app.add_middleware(ProductCORSMiddleware, origins=web_origins())
     return app

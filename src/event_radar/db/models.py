@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -161,6 +162,7 @@ class UserContextRevision(Base):
     __tablename__ = "user_context_revisions"
     __table_args__ = (
         UniqueConstraint("user_id", "revision", name="uq_user_context_revision"),
+        UniqueConstraint("id", "user_id", name="uq_context_owned_id"),
         CheckConstraint("revision > 0", name="ck_user_context_revision_positive"),
     )
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
@@ -174,3 +176,70 @@ class UserContextRevision(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
     )
+
+
+class CurationJob(Base):
+    """One bounded call per full input identity; failed/abandoned claims are terminal."""
+
+    __tablename__ = "curation_jobs"
+    __table_args__ = (
+        UniqueConstraint("identity", name="uq_curation_identity"),
+        UniqueConstraint(
+            "id", "user_id", "context_revision_id", "snapshot_id", name="uq_curation_packet_binding"
+        ),
+        ForeignKeyConstraint(
+            ["context_revision_id", "user_id"],
+            ["user_context_revisions.id", "user_context_revisions.user_id"],
+            name="fk_curation_owned_context",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND finished_at IS NULL AND failure_code IS NULL) OR "
+            "(status IN ('success', 'partial') AND finished_at IS NOT NULL "
+            "AND failure_code IS NULL) OR "
+            "(status = 'failed' AND finished_at IS NOT NULL AND failure_code IS NOT NULL)",
+            name="ck_curation_state",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("app_users.id"), nullable=False
+    )
+    context_revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("regional_universe_snapshots.id"), nullable=False
+    )
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    usage_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+
+
+class WeekendPacketRecord(Base):
+    __tablename__ = "weekend_packets"
+    __table_args__ = (
+        UniqueConstraint("execution_id", name="uq_packet_execution"),
+        ForeignKeyConstraint(
+            ["execution_id", "user_id", "context_revision_id", "snapshot_id"],
+            [
+                "curation_jobs.id",
+                "curation_jobs.user_id",
+                "curation_jobs.context_revision_id",
+                "curation_jobs.snapshot_id",
+            ],
+            name="fk_packet_execution_binding",
+        ),
+        Index("ix_packet_owner_created", "user_id", "created_at"),
+    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    execution_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    context_revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    snapshot_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    packet_payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

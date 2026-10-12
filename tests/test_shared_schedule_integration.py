@@ -276,7 +276,8 @@ def test_local_target_denied_and_wrong_migration_rejected(worker, tmp_path, monk
     # Independently verify an unexpected migration is rejected on the disposable database.
     with Session(deps.engine) as session:
         assert (
-            session.scalar(text("SELECT version_num FROM alembic_version")) == "0003_user_context"
+            session.scalar(text("SELECT version_num FROM alembic_version"))
+            == "0004_weekend_packets"
         )
     with deps.engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num = 'unapproved_revision'"))
@@ -285,4 +286,6 @@ def test_local_target_denied_and_wrong_migration_rejected(worker, tmp_path, monk
             database_preflight(deps.engine, database="event_radar_test", user="event_radar_test")
     finally:
         with deps.engine.begin() as connection:
-            connection.execute(text("UPDATE alembic_version SET version_num = '0003_user_context'"))
+            connection.execute(
+                text("UPDATE alembic_version SET version_num = '0004_weekend_packets'")
+            )

@@ -64,3 +64,22 @@ credential/private-state access and broad onboarding/dashboard implementation.
 No unresolved governing conflict prevents this expressly authorized limited
 offline package. Formal cross-project reconciliation remains outstanding; this
 record does not purport to supply it.
+
+## 2026-10-12 extension: AI #3 and canonical packets
+
+The owner's **Personalized Curation & Canonical Weekend Packet** assignment extends
+the preceding context-only exception to bounded offline AI #3 contracts, deterministic
+curation, canonical packet persistence, authenticated readback and associated tests.
+The earlier exclusion of AI #3/packet storage applied to the preceding package; this
+explicit new authorization supersedes it only for this offline implementation.
+See [implementation and verification report](e2-personalized-curation-packets.md).
+
+Baseline is E2 `351808b8a67308f11a767993b8f3c66dc94a5368`, stacked on the unchanged
+E1 dependency above. This extension authorizes a branch push and exact-head Product
+Foundation CI, not a merge or deployment. Real AI calls, collection, hosted changes,
+account provisioning, delivery, private-state access, billing and scheduling remain
+excluded. The retained real research database is not the E2 application database.
+
+The existing E1 acceptance blockers, controlled overlap and PM/execution-lead review
+obligations remain. This records the owner's bounded execution direction; it does not
+supply a formal project-wide roadmap reconciliation or declare any phase accepted.
