@@ -1,0 +1,17 @@
+{
+  "policy_version": "e1-weekly-sonoma-v1",
+  "semantic_model": "gpt-6-luna",
+  "discovery_model": "gpt-6-luna",
+  "semantic_pricing": [0.10, 0.01, 0.50],
+  "discovery_pricing": [0.10, 0.01, 0.50],
+  "semantic_batch_size": 10,
+  "timeout_seconds": 600,
+  "database_session_mode": "session",
+  "discovery_budget": {
+    "max_waves": 1, "max_model_calls": 6, "max_web_search_calls": 6,
+    "max_model_cost_usd": "0.10"
+  },
+  "whole_worker_limits": {
+    "max_model_calls": 24, "max_estimated_model_cost_usd": "0.25"
+  }
+}

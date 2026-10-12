@@ -86,6 +86,13 @@ jobs:
                f"test_two_distinct_consumers_reuse_one_snapshot[{quality}]")
               for quality in ("success", "partial")
           })
+          required.update({
+              ("tests.test_shared_schedule_integration",
+               f"test_scheduled_attempt_is_never_automatically_retried[{mode}]")
+              for mode in ("success", "partial", "failed", "abandoned")
+          })
+          required.add(("tests.test_shared_schedule_integration",
+                        "test_scheduled_concurrency_and_no_refresh"))
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()

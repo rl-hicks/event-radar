@@ -416,7 +416,8 @@ async def test_execution_owns_client_and_engine_and_uses_existing_orchestrator(m
         constructors.append(kwargs)
         return client
 
-    async def fake_worker(scope, deps, *, budget, refresh):
+    async def fake_worker(scope, deps, *, budget, refresh, attempt_once):
+        assert not attempt_once
         engines.append(deps.engine)
         workers.append((scope, deps, budget, refresh))
         return WorkerResult("replayed")

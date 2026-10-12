@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from sqlalchemy.engine import URL
 
 from event_radar.collectors.regional_sources import default_sonoma_source_registry
-from event_radar.db.config import postgres_url
+from event_radar.db.config import research_database_url
 from event_radar.db.session import build_engine
 from event_radar.models.regional import Identifier, ResearchScope
 from event_radar.models.regional_discovery import DiscoveryBudget
@@ -20,6 +20,7 @@ from event_radar.models.token_usage import ModelTokenPricing
 from event_radar.services.adaptive_regional_discovery import OpenAIAdaptiveDiscoveryProvider
 from event_radar.services.hike_catalog import HikeCatalogRepository
 from event_radar.services.regional_semantic_analysis import OpenAIRegionalSemanticProvider
+from event_radar.shared.spend_guard import WholeWorkerLimits, guard_dependencies
 from event_radar.shared.worker import (
     ResearchBudget,
     WorkerDependencies,
@@ -79,24 +80,7 @@ class RealRuntimeConfig(BaseModel):
         return self
 
     def postgres_url(self) -> URL:
-        url = postgres_url(self.database_url.get_secret_value())
-        if (
-            not url.host
-            or not url.username
-            or not url.password
-            or not url.database
-            or url.port is None
-            or not 1 <= url.port <= 65535
-            or url.port == 6543
-            or set(url.query) - {"sslmode"}
-        ):
-            raise ValueError("Explicit direct/session PostgreSQL target is required.")
-        local = url.host in {"localhost", "127.0.0.1", "::1"}
-        if not local and url.query.get("sslmode") != "verify-full":
-            raise ValueError("Remote research PostgreSQL requires sslmode=verify-full.")
-        if local and url.query.get("sslmode") not in (None, "disable", "require", "verify-full"):
-            raise ValueError("Unsupported local PostgreSQL SSL mode.")
-        return url
+        return research_database_url(self.database_url.get_secret_value())
 
     def research_budget(self) -> ResearchBudget:
         return ResearchBudget(
@@ -165,7 +149,13 @@ def build_real_dependencies(
     )
 
 
-async def execute_real(config: RealRuntimeConfig, *, refresh: bool = False) -> WorkerResult:
+async def execute_real(
+    config: RealRuntimeConfig,
+    *,
+    refresh: bool = False,
+    attempt_once: bool = False,
+    whole_worker_limits: WholeWorkerLimits | None = None,
+) -> WorkerResult:
     """Execution boundary; call only for a separately owner-authorized envelope."""
     # Explicit endpoint and transport avoid ambient OpenAI base URL/proxy settings.
     async with httpx.AsyncClient(trust_env=False, timeout=config.timeout_seconds) as transport:
@@ -178,11 +168,14 @@ async def execute_real(config: RealRuntimeConfig, *, refresh: bool = False) -> W
         ) as client:
             dependencies = build_real_dependencies(config, client=client)
             try:
+                if whole_worker_limits is not None:
+                    dependencies = guard_dependencies(dependencies, whole_worker_limits)
                 return await run_regional_worker(
                     config.scope,
                     dependencies,
                     budget=config.research_budget(),
                     refresh=refresh,
+                    attempt_once=attempt_once,
                 )
             finally:
                 dependencies.engine.dispose()

@@ -10,8 +10,10 @@ from time import monotonic
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import Engine
+from pydantic import TypeAdapter
+from sqlalchemy import Engine, select
 
+from event_radar.db.models import RegionalResearchRun, RegionalUniverse
 from event_radar.db.regional import (
     begin_regional_research_run,
     complete_regional_research_run,
@@ -73,7 +75,7 @@ class WorkerDependencies:
 
 @dataclass(frozen=True)
 class WorkerResult:
-    status: Literal["success", "partial", "failed", "replayed", "busy"]
+    status: Literal["success", "partial", "failed", "replayed", "busy", "blocked"]
     run_id: UUID | None = None
     snapshot_id: UUID | None = None
     failure_code: FailureCode | None = None
@@ -85,6 +87,7 @@ async def run_regional_worker(
     *,
     budget: ResearchBudget,
     refresh: bool = False,
+    attempt_once: bool = False,
 ) -> WorkerResult:
     """Run an explicit weekend; successful same-key retries do no research.
 
@@ -92,6 +95,8 @@ async def run_regional_worker(
     Partial/failed attempts can be retried. The current successful snapshot
     remains available throughout research and survives failed/partial refreshes.
     """
+    if attempt_once and refresh:
+        raise ValueError("Scheduled attempts cannot refresh.")
     scope = ResearchScope.model_validate(scope.model_dump())
     diagnostics: list[OperationalDiagnostics] = []
     summary: AdaptiveDiscoverySummary | None = None
@@ -100,6 +105,28 @@ async def run_regional_worker(
             return WorkerResult("busy")
         session = claim.session
         with session.begin():
+            if attempt_once:
+                # Same advisory lock as all worker paths: no check/dispatch race.
+                # Even an abandoned running row consumes scheduled authorization.
+                previous = session.scalars(
+                    select(RegionalResearchRun)
+                    .join(RegionalUniverse, RegionalResearchRun.universe_id == RegionalUniverse.id)
+                    .where(
+                        RegionalUniverse.region_id == scope.identity.region_id,
+                        RegionalUniverse.weekend_friday == scope.identity.friday,
+                        RegionalUniverse.research_policy_version
+                        == scope.identity.research_policy_version,
+                    )
+                    .order_by(RegionalResearchRun.started_at.desc(), RegionalResearchRun.id.desc())
+                    .limit(1)
+                ).first()
+                if previous is not None:
+                    return WorkerResult(
+                        "replayed" if previous.status == "success" else "blocked",
+                        previous.id,
+                        previous.snapshot_id,
+                        TypeAdapter(FailureCode | None).validate_python(previous.failure_code),
+                    )
             claim.recover_abandoned(scope.identity)
             current = read_current_regional_universe(session, scope.identity)
             if current is not None and current.quality_status == "success" and not refresh:
