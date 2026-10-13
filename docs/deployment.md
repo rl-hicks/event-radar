@@ -1,5 +1,8 @@
 # E0 staging deployment (WP6)
 
+Historical E0 instructions. For the current E2 branch, migration head and scope, use
+[e2-staging-readiness.md](e2-staging-readiness.md). Do not deploy E2 using the WP6 branch or 0001-only migration target below.
+
 This is foundation-only staging, not Product V1. Configuration in Git is not proof
 of deployment. WP7 CI and all personal production behavior remain outside this work.
 Do not deploy from main. Use `codex/e0-wp6-deployment-foundation` and record the exact

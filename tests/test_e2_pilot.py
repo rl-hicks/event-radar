@@ -171,9 +171,19 @@ async def test_connected_ordinary_user_pilot(pilot_db, monkeypatch, caplog):
         assert client.get(url, headers=headers[0]).status_code == 200
         assert client.get(url, headers=headers[1]).status_code == 404
         assert client.get("/api/me/packets/current", headers=headers[1]).json()["packet"] is None
-        challenge = client.post("/api/me/delivery/telegram/challenge", headers=headers[0]).json()[
-            "challenge"
-        ]
+        from event_radar.services import operator_telegram
+
+        monkeypatch.setattr(operator_telegram, "auth_config", lambda: CONFIG)
+        monkeypatch.setattr(operator_telegram, "get_verifier", lambda _: verifier)
+        with Session(engine) as session, session.begin():
+            challenge = operator_telegram.request_operator_challenge(
+                session, headers[0]["Authorization"].removeprefix("Bearer "), approved=True
+            )
+        assert (
+            client.post("/api/me/delivery/telegram/challenge", headers=headers[0]).status_code
+            == 404
+        )
+        assert client.get("/api/me/delivery/telegram/config", headers=headers[0]).status_code == 404
         destination = int(uuid4().int % (2**40)) + 1
         update = {
             "update_id": 1,
@@ -487,3 +497,27 @@ async def test_live_dispatch_revocation_between_chunks_and_approval_scope(setup,
         dispatch_delivery(engine, intent, transport, approval=approval, retry=True) == "ambiguous"
     )
     assert len(calls) == 1
+
+
+def test_operator_link_requires_approval_and_verified_account(setup, monkeypatch):
+    from jwt import InvalidTokenError
+
+    from event_radar.db.delivery import DeliveryDenied
+    from event_radar.db.models import DeliveryChallenge
+    from event_radar.services import operator_telegram
+
+    engine, ids, *_ = setup
+    key, claims, verifier = signing_fixture(monkeypatch)
+    monkeypatch.setattr(operator_telegram, "auth_config", lambda: CONFIG)
+    monkeypatch.setattr(operator_telegram, "get_verifier", lambda _: verifier)
+    token = signed(key, {**claims, "sub": str(ids[1])})
+    with Session(engine) as session, session.begin():
+        with pytest.raises(DeliveryDenied):
+            operator_telegram.request_operator_challenge(session, token)
+        with pytest.raises(InvalidTokenError):
+            operator_telegram.request_operator_challenge(session, "not-a-token", approved=True)
+        assert list(session.scalars(select(DeliveryChallenge))) == []
+        code = operator_telegram.request_operator_challenge(session, token, approved=True)
+        assert len(code) == 43
+        rows = list(session.scalars(select(DeliveryChallenge)))
+        assert len(rows) == 1 and rows[0].user_id == ids[1]

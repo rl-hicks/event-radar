@@ -297,13 +297,14 @@ def test_authenticated_binding_api_isolation_and_no_store(setup, monkeypatch, ca
         assert "destination" not in response.text and token not in response.text
         assert client.get(url, headers=headers[1]).json() == []
         assert client.post(f"{url}/{bid}/revoke", headers=headers[1]).status_code == 404
-        assert client.post("/api/me/delivery/telegram/challenge").status_code == 401
+        assert client.post("/api/me/delivery/telegram/challenge").status_code == 404
         assert client.get("/api/me/packets/current").status_code == 401
         assert client.get("/api/me/packets/current", headers=headers[1]).status_code == 200
         issued = client.post("/api/me/delivery/telegram/challenge", headers=headers[1])
-        assert issued.status_code == 200 and len(issued.json()["challenge"]) == 43
+        assert issued.status_code == 404
+        assert client.get("/api/me/delivery/telegram/config", headers=headers[1]).status_code == 404
         assert client.post(f"{url}/{bid}/revoke", headers=headers[0]).status_code == 204
-    assert token not in caplog.text and issued.json()["challenge"] not in caplog.text
+    assert token not in caplog.text
 
 
 def test_delivery_rls_denies_client(setup):

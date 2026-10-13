@@ -5,6 +5,7 @@ import asyncio
 import getpass
 import json
 import os
+import sys
 from pathlib import Path
 from uuid import UUID
 
@@ -59,6 +60,8 @@ def main() -> None:
         item.add_argument("--pricing-review", type=Path)
         if name == "curate":
             item.add_argument("--execute-approved", action="store_true")
+    link = sub.add_parser("telegram-link")
+    link.add_argument("--approve-private-development-link", action="store_true")
     delivery = sub.add_parser("deliver")
     delivery.add_argument("--packet-id", type=UUID, required=True)
     delivery.add_argument("--binding-id", type=UUID, required=True)
@@ -77,6 +80,17 @@ def main() -> None:
                 raise ValueError("Export does not match the reviewed envelope hash.")
             with Session(engine) as session, session.begin():
                 print(import_public_snapshot(session, envelope))
+        elif args.operation == "telegram-link":
+            if not args.approve_private_development_link or not sys.stdout.isatty():
+                raise ValueError("Explicit approval and a private interactive terminal required.")
+            from event_radar.services.operator_telegram import request_operator_challenge
+
+            token = getpass.getpass("Consenting ordinary account access token (hidden): ")
+            with Session(engine) as session, session.begin():
+                code = request_operator_challenge(session, token, approved=True)
+            print("Private development only. Send to the operator-confirmed bot within 10 minutes:")
+            print("/start " + code)
+            print("Keep this one-use code private; do not record terminal output.")
         elif args.operation == "deliver":
             if not args.execute_approved:
                 raise ValueError("Separate delivery execution approval required.")

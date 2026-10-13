@@ -6,7 +6,6 @@ import { useSession } from './auth/useSession'
 import { getMe, type Me } from './api/client'
 import PacketView from './PacketView'
 import ProfileEditor from './ProfileEditor'
-import TelegramConnection from './TelegramConnection'
 
 type Props = { client: SupabaseClient | null; invalid?: boolean }
 export default function Foundation({ client, invalid = false }: Props) {
@@ -90,7 +89,6 @@ function Identity({ client, session }: { client: SupabaseClient; session: Sessio
     {current?.me && <>
       <PacketView key={`${session.user.id}:${packetRefresh}`} client={client} session={session} />
       <details><summary>Edit your profile</summary><ProfileEditor key={`${session.user.id}:${session.access_token}`} client={client} account={session.user.id} onSaved={() => setPacketRefresh(n => n + 1)} /></details>
-      <details><summary>Connect Telegram</summary><TelegramConnection key={`${session.user.id}:${session.access_token}`} client={client} account={session.user.id} /></details>
     </>}
     {current?.error && <button onClick={() => { setResult(null); setAttempt(value => value + 1) }}>Retry API</button>}
     <button disabled={busy} onClick={logout}>{busy ? 'Signing out…' : 'Sign out'}</button>

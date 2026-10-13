@@ -1,10 +1,10 @@
-# Staging only. Import this Blueprint from the WP6 branch; review the free plan.
+# E2 staging preparation only; manual deployment requires separate approval.
 services:
   - type: web
     name: event-radar-api-staging
     runtime: python
     plan: free
-    branch: codex/e0-wp6-deployment-foundation
+    branch: e2/first-user-vertical-slice
     autoDeployTrigger: "off"
     buildCommand: uv sync --frozen --no-dev
     startCommand: .venv/bin/uvicorn event_radar.api.app:create_app --factory --host 0.0.0.0 --port $PORT --no-access-log
@@ -24,3 +24,5 @@ services:
         sync: false
       - key: SUPABASE_JWT_AUDIENCE
         value: authenticated
+      - key: PACKET_RESEARCH_POLICY
+        value: e1-weekly-sonoma-v1
