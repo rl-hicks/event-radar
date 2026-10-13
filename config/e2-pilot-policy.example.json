@@ -1,0 +1,12 @@
+{
+  "provider": "deterministic",
+  "model": "deterministic-v1",
+  "research_policy_version": "e1-wp7-liveproof-2026-10-16-v1",
+  "configuration_version": "pilot-preparation-v1",
+  "max_recommendations": 12,
+  "max_input_bytes": 500000,
+  "max_opportunities": 500,
+  "max_output_tokens": 6000,
+  "timeout_seconds": 30,
+  "max_research_age_hours": 96
+}

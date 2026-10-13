@@ -31,3 +31,11 @@ def web_origins() -> list[str]:
         if origin not in origins:
             origins.append(origin)
     return origins
+
+
+def packet_research_policy() -> str:
+    """Server-selected pilot policy; never rewrite or accept a browser-supplied identity."""
+    value = os.environ.get("PACKET_RESEARCH_POLICY", "e1-weekly-sonoma-v1")
+    if value not in {"e1-weekly-sonoma-v1", "e1-wp7-liveproof-2026-10-16-v1"}:
+        raise ValueError("Unsupported packet research policy.")
+    return value

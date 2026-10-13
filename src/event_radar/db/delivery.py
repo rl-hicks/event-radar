@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from event_radar.db.models import AppUser, DeliveryBinding, DeliveryChallenge, DeliveryIntent
 from event_radar.db.packets import read_packet
 from event_radar.db.users import get_or_create_user
+from event_radar.models.delivery_authority import PilotDeliveryAuthority
 
 
 class DeliveryDenied(Exception):
@@ -161,9 +162,13 @@ def queue_delivery(
     channel: str,
     *,
     development: bool = False,
+    approval: PilotDeliveryAuthority | None = None,
 ) -> UUID:
     # No commercial entitlement implementation exists. Public/live use fails closed.
-    if not development or channel != "telegram":
+    if channel != "telegram" or not (
+        development
+        or (approval and approval.permits(uid, packet_id, binding_id, datetime.now(UTC)))
+    ):
         raise DeliveryDenied
     _lock_user(session, uid)
     binding = session.scalar(

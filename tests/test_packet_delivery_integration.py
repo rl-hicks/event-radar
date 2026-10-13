@@ -437,7 +437,6 @@ async def test_multimessage_ambiguous_and_unicode_rendering(setup, monkeypatch):
 
 
 async def test_current_precedence_and_authenticated_two_user_api(setup, monkeypatch):
-    from functools import partial
 
     import event_radar.api.packets as api
 
@@ -460,7 +459,9 @@ async def test_current_precedence_and_authenticated_two_user_api(setup, monkeypa
     monkeypatch.setattr(
         api,
         "read_current_packet",
-        partial(read_current_packet, now=now, research_policy=policy.research_policy_version),
+        lambda s, uid, **kwargs: read_current_packet(
+            s, uid, now=now, research_policy=policy.research_policy_version
+        ),
     )
     key, claims, verifier = signing_fixture(monkeypatch)
     monkeypatch.setattr(identity, "auth_config", lambda: CONFIG)

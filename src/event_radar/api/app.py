@@ -28,7 +28,7 @@ from event_radar.db.packets import PacketCorrupt
 logger = logging.getLogger("event_radar.api")
 
 
-def create_app() -> FastAPI:
+def create_app(*, telegram_webhook_secret: str | None = None) -> FastAPI:
     if not logger.handlers:
         logger.addHandler(logging.StreamHandler())
     logger.setLevel(logging.INFO)
@@ -122,6 +122,10 @@ def create_app() -> FastAPI:
     app.include_router(context_router)
     app.include_router(packet_router)
     app.include_router(delivery_router)
+    if telegram_webhook_secret is not None:
+        from event_radar.api.telegram_inbound import webhook_router
+
+        app.include_router(webhook_router(telegram_webhook_secret))
     # Outer CORS middleware also applies to sanitized error responses.
     app.add_middleware(ProductCORSMiddleware, origins=web_origins())
     return app

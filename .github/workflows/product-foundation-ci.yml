@@ -123,6 +123,8 @@ jobs:
                   "test_revocation_blocks_queued_delivery_and_changed_revision",
               )
           })
+          required.add(("tests.test_e2_pilot", "test_connected_ordinary_user_pilot"))
+          required.add(("tests.test_e2_pilot", "test_live_dispatch_revocation_between_chunks_and_approval_scope"))
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()

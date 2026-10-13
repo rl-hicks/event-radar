@@ -1,5 +1,7 @@
 """Authenticated connection initiation/revocation; no public dispatch or inbound transport."""
 
+import os
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
@@ -49,3 +51,10 @@ def revoke_binding(binding_id: UUID, identity: Identity, session: Database) -> N
         revoke(session, identity.id, binding_id)
     except DeliveryDenied:
         raise HTTPException(status_code=404) from None
+
+
+@router.get("/telegram/config")
+def telegram_config(identity: Identity, response: Response) -> dict[str, str | None]:
+    response.headers["Cache-Control"] = "no-store"
+    username = os.environ.get("TELEGRAM_PUBLIC_BOT_USERNAME", "")
+    return {"bot_username": username if re.fullmatch(r"[A-Za-z0-9_]{5,32}", username) else None}

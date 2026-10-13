@@ -1,0 +1,20 @@
+# Isolated E2 pilot application data; never the E1 evidence or disposable test database.
+name: event-radar-e2-pilot
+services:
+  postgres_e2:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: event_radar_e2_pilot
+      POSTGRES_USER: event_radar_e2_pilot
+      POSTGRES_PASSWORD: e2_local_synthetic_only
+    ports:
+      - "127.0.0.1:55434:5432"
+    volumes:
+      - e2_pilot_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U event_radar_e2_pilot -d event_radar_e2_pilot"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+volumes:
+  e2_pilot_data:

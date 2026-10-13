@@ -46,6 +46,7 @@ async def generate_packet(
     provider: CurationProvider,
     *,
     now: datetime | None = None,
+    expected_context_revision_id: UUID | None = None,
 ) -> GenerationOutcome:
     """Account UUID is trusted internal authority, never an arbitrary public API selector.
 
@@ -65,6 +66,11 @@ async def generate_packet(
             return GenerationOutcome("failed", failure_code="snapshot_missing")
         if context is None:
             return GenerationOutcome("failed", failure_code="context_missing")
+        if (
+            expected_context_revision_id is not None
+            and context.revision_id != expected_context_revision_id
+        ):
+            return GenerationOutcome("failed", failure_code="context_changed")
         age = observed - snapshot.universe.scope.as_of
         if age < timedelta(0) or age > timedelta(hours=policy.max_research_age_hours):
             return GenerationOutcome("failed", failure_code="research_stale")

@@ -5,6 +5,8 @@ import { signIn, signOut, signUp } from './auth/actions'
 import { useSession } from './auth/useSession'
 import { getMe, type Me } from './api/client'
 import PacketView from './PacketView'
+import ProfileEditor from './ProfileEditor'
+import TelegramConnection from './TelegramConnection'
 
 type Props = { client: SupabaseClient | null; invalid?: boolean }
 export default function Foundation({ client, invalid = false }: Props) {
@@ -66,6 +68,7 @@ function Identity({ client, session }: { client: SupabaseClient; session: Sessio
   const [attempt, setAttempt] = useState(0)
   const [busy, setBusy] = useState(false)
   const [logoutError, setLogoutError] = useState('')
+  const [packetRefresh, setPacketRefresh] = useState(0)
   useEffect(() => {
     let active = true
     getMe(client).then(me => { if (active) setResult({ token: session.access_token, me }) }).catch(error => {
@@ -84,7 +87,11 @@ function Identity({ client, session }: { client: SupabaseClient; session: Sessio
     {!current && <p role="status">Checking API connectivity…</p>}
     {current?.error && <p role="alert">{current.error} You can retry or sign out and sign in again.</p>}
     {current?.me && <section aria-label="Backend identity"><h2>Backend connection</h2><p>API connectivity: confirmed</p><p>Backend identity: {current.me.id}</p><p>Database roundtrip: {current.me.database_roundtrip ? 'confirmed' : 'not confirmed'}</p></section>}
-    {current?.me && <PacketView key={session.user.id} client={client} session={session} />}
+    {current?.me && <>
+      <PacketView key={`${session.user.id}:${packetRefresh}`} client={client} session={session} />
+      <details><summary>Edit your profile</summary><ProfileEditor key={`${session.user.id}:${session.access_token}`} client={client} account={session.user.id} onSaved={() => setPacketRefresh(n => n + 1)} /></details>
+      <details><summary>Connect Telegram</summary><TelegramConnection key={`${session.user.id}:${session.access_token}`} client={client} account={session.user.id} /></details>
+    </>}
     {current?.error && <button onClick={() => { setResult(null); setAttempt(value => value + 1) }}>Retry API</button>}
     <button disabled={busy} onClick={logout}>{busy ? 'Signing out…' : 'Sign out'}</button>
     {logoutError && <p role="alert">{logoutError}</p>}

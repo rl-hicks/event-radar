@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 from event_radar.db.delivery import DeliveryDenied
 from event_radar.db.models import DeliveryAttempt, DeliveryBinding, DeliveryIntent
 from event_radar.db.packets import read_packet
+from event_radar.models.delivery_authority import PilotDeliveryAuthority
 from event_radar.models.weekend_packet import WeekendPacket
+from event_radar.services.telegram_transport import TelegramHTTPTransport
 
 
 @dataclass
@@ -97,25 +99,45 @@ def dispatch_fake(
     development: bool = False,
     retry: bool = False,
 ) -> str:
-    # This package cannot dispatch through a live implementation, even by configuration.
     if not development or type(transport) is not FakeTelegramTransport:
         raise DeliveryDenied
+    return dispatch_delivery(engine, intent_id, transport, development=True, retry=retry)
+
+
+def dispatch_delivery(
+    engine: Engine,
+    intent_id: UUID,
+    transport: FakeTelegramTransport | TelegramHTTPTransport,
+    *,
+    development: bool = False,
+    retry: bool = False,
+    approval: PilotDeliveryAuthority | None = None,
+) -> str:
+    fake = type(transport) is FakeTelegramTransport and development
     with Session(engine) as session, session.begin():
         intent = session.scalar(
             select(DeliveryIntent).where(DeliveryIntent.id == intent_id).with_for_update()
         )
-        if intent is None:
+        if intent is None or not (
+            fake
+            or (
+                type(transport) is TelegramHTTPTransport
+                and approval
+                and approval.permits(
+                    intent.user_id, intent.packet_id, intent.binding_id, datetime.now(UTC)
+                )
+            )
+        ):
             raise DeliveryDenied
         if intent.status != "pending" and not (
             retry and intent.status == "failed" and intent.attempts < 3
         ):
             return intent.status
-        binding = session.scalar(
-            select(DeliveryBinding).where(DeliveryBinding.id == intent.binding_id).with_for_update()
-        )
+        binding = session.get(DeliveryBinding, intent.binding_id)
         if (
             binding is None
             or binding.user_id != intent.user_id
+            or binding.channel != "telegram"
             or binding.status != "active"
             or not binding.consent
         ):
@@ -126,6 +148,8 @@ def dispatch_fake(
             if packet is None:
                 raise DeliveryDenied
             messages = render_telegram(packet)
+            if not 1 <= len(messages) <= 16:
+                raise DeliveryDenied
         except Exception:
             intent.status, intent.failure_code = "failed", "packet_unavailable"
             return "failed"
@@ -142,39 +166,51 @@ def dispatch_fake(
                 started_at=intent.updated_at,
             )
         )
-        binding_id = binding.id
-    # Claim is committed before transport. A crash leaves 'sending' for reconciliation.
-    # Binding lock linearizes send against revocation/rebinding; no live I/O is allowed here.
+        binding_id, uid, pid = binding.id, intent.user_id, intent.packet_id
+    # Durable claim precedes transport. A crash leaves sending; never auto-redispatch.
+    status: Literal["sent", "failed", "ambiguous"] = "sent"
+    code = None
+    revoked = False
+    for index, message in enumerate(messages):
+        # No Session/transaction or DB lock remains open across any network I/O.
+        with Session(engine) as session:
+            binding = session.get(DeliveryBinding, binding_id)
+            valid = (
+                binding is not None
+                and binding.status == "active"
+                and binding.consent
+                and binding.user_id == uid
+                and binding.channel == "telegram"
+            )
+            destination = binding.destination if binding else ""
+        if not valid or not (
+            fake or (approval and approval.permits(uid, pid, binding_id, datetime.now(UTC)))
+        ):
+            revoked = index == 0
+            status, code = (
+                ("failed", "rejected") if index == 0 else ("ambiguous", "transport_unknown")
+            )
+            break
+        try:
+            outcome = transport.send(destination, message)
+        except Exception:
+            outcome = "ambiguous"
+        if outcome != "success":
+            status = "failed" if outcome == "rejected" and index == 0 else "ambiguous"
+            code = (
+                "rejected"
+                if outcome == "rejected"
+                else "transport_unknown"
+                if outcome == "ambiguous"
+                else "invalid_response"
+            )
+            break
     with Session(engine) as session, session.begin():
-        binding = session.scalar(
-            select(DeliveryBinding).where(DeliveryBinding.id == binding_id).with_for_update()
-        )
         intent = session.get(DeliveryIntent, intent_id)
         attempt = session.get(DeliveryAttempt, attempt_id)
-        assert intent is not None and attempt is not None and binding is not None
-        status: Literal["sent", "failed", "ambiguous"] = "sent"
-        code = None
-        if binding.status != "active" or not binding.consent:
-            intent.status, intent.failure_code = "revoked", "revoked"
-            attempt.status, attempt.failure_code = "failed", "rejected"
-            attempt.finished_at = intent.updated_at = datetime.now(UTC)
-            return "revoked"
-        for index, message in enumerate(messages):
-            try:
-                outcome = transport.send(binding.destination, message)
-            except Exception:
-                outcome = "ambiguous"
-            if outcome != "success":
-                status = "failed" if outcome == "rejected" and index == 0 else "ambiguous"
-                code = (
-                    "rejected"
-                    if outcome == "rejected"
-                    else "transport_unknown"
-                    if outcome == "ambiguous"
-                    else "invalid_response"
-                )
-                break
-        intent.status, intent.failure_code = status, code
+        assert intent is not None and attempt is not None
+        intent.status = "revoked" if revoked else status
+        intent.failure_code = "revoked" if revoked else code
         attempt.status, attempt.failure_code = status, code
         attempt.finished_at = intent.updated_at = datetime.now(UTC)
-        return status
+        return intent.status
