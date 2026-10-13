@@ -46,7 +46,7 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
             assert columns[name]["default"] == "now()"
         with engine.connect() as connection:
             context = MigrationContext.configure(connection, opts={"compare_server_default": True})
-            assert context.get_current_revision() == "0005_packet_delivery"
+            assert context.get_current_revision() == "0006_hosted_access_hardening"
             assert compare_metadata(context, Base.metadata) == []
         command.downgrade(config, "base")
         inspector = inspect(engine)

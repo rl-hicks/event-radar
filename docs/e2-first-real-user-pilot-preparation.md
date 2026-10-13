@@ -1,5 +1,9 @@
 # E2 first real-user pilot preparation
 
+Later security gate: [database remediation](e2-database-security-remediation.md)
+adds revision 0006. The local init command now targets that hardened head; the
+0005 descriptions below record the original proof, not current staging approval.
+
 This is offline implementation evidence, not a real-user proof or acceptance of E1, E2, or Product V1. Starting commit: `af495cc99aa4e41e17ebdc9577d4118cc5bbb4a4`. E1 remains `26b454f41c3513de29f8e3a2bdada5f82185e421`; its activation gate and controlled overlap remain unchanged. No governing artifact was modified.
 
 ## Connected local proof

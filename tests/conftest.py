@@ -27,6 +27,7 @@ def database(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine, Config]]
     monkeypatch.setenv("DATABASE_URL", url.render_as_string(hide_password=False))
     engine = build_engine(url)
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.attributes["disposable_security_teardown"] = True
     try:
         with engine.connect() as connection:
             identity = connection.execute(text("SELECT current_database(), current_user")).one()

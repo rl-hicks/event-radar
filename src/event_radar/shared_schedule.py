@@ -87,6 +87,7 @@ def database_preflight(engine: Engine, *, database: str, user: str) -> None:
             ["0003_user_context"],
             ["0004_weekend_packets"],
             ["0005_packet_delivery"],
+            ["0006_hosted_access_hardening"],
         ):
             raise ValueError("Required migration missing; no automatic migrations.")
 

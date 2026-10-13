@@ -1,5 +1,9 @@
 # E2 scope correction and staging readiness
 
+Security gate update: [database remediation](e2-database-security-remediation.md) and
+[hosted execution runbook](e2-database-security-runbook.md) supersede this historical
+checklist's 0005 target. Hosted staging now requires separately approved hardening through 0006.
+
 Baseline: `ba7c96082605f7ce38b20db2b9832028fde8aac6`, branch `e2/first-user-vertical-slice`. The exact new candidate SHA and its CI run are reported in the implementation handoff; use that full SHA for both manual deployments, not a moving branch tip. No hosted inspection, deployment or migration occurred. Existing Render/Vercel deployment SHAs and URLs are unknown; the owner's report that Supabase is unpaused is not independent availability evidence. E1/E2 remain incomplete.
 
 ## Product scope and operator-only Telegram linking

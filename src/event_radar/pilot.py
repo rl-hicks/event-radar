@@ -73,7 +73,7 @@ def main() -> None:
         if args.operation == "init":
             # Additive local migrations only, never downgrade and never inherit hosted DATABASE_URL.
             os.environ["DATABASE_URL"] = LOCAL_URL.render_as_string(hide_password=False)
-            command.upgrade(Config("alembic.ini"), "0005_packet_delivery")
+            command.upgrade(Config("alembic.ini"), "0006_hosted_access_hardening")
         elif args.operation == "import-snapshot":
             envelope = json.loads(args.export.read_text())
             if envelope.get("sha256") != args.expected_sha256:
