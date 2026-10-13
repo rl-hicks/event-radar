@@ -4,10 +4,11 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { signIn, signOut, signUp } from './auth/actions'
 import { useSession } from './auth/useSession'
 import { getMe, type Me } from './api/client'
+import PacketView from './PacketView'
 
 type Props = { client: SupabaseClient | null; invalid?: boolean }
 export default function Foundation({ client, invalid = false }: Props) {
-  return <main><p className="eyebrow">Event Radar · E0 foundation</p>
+  return <main><p className="eyebrow">Event Radar</p>
     {client ? <Connected client={client} /> : <Pages client={null} session={null} loading={false} error={invalid ? 'Supabase browser configuration is invalid.' : 'Configure the public Supabase browser values to enable authentication.'} />}
   </main>
 }
@@ -25,7 +26,7 @@ function Pages({ client, session, loading, error }: State) {
     return session ? <Navigate to="/app" replace /> : null
   }
   return <Routes>
-    <Route path="/" element={<><h1>Event Radar</h1><p>Your weekend, researched for you.</p><p>The product is under development. This is the authentication and database foundation only.</p><nav aria-label="Account"><Link to="/login">Sign in</Link> · <Link to="/signup">Create account</Link></nav></>} />
+    <Route path="/" element={<><h1>Event Radar</h1><p>Your weekend, researched for you.</p><p>The product is under development. Sign in to read your available Weekend Packet.</p><nav aria-label="Account"><Link to="/login">Sign in</Link> · <Link to="/signup">Create account</Link></nav></>} />
     <Route path="/login" element={gate(false) ?? <AuthForm key="login" client={client!} mode="login" />} />
     <Route path="/signup" element={gate(false) ?? <AuthForm key="signup" client={client!} mode="signup" />} />
     <Route path="/app" element={gate(true)} />
@@ -78,11 +79,12 @@ function Identity({ client, session }: { client: SupabaseClient; session: Sessio
     catch { setLogoutError('Sign-out could not be completed. Please try again.'); setBusy(false) }
   }
   const current = result?.token === session.access_token ? result : null
-  return <><h1>E0 authenticated foundation</h1><p>Signed in as {session.user.email || 'authenticated user'}.</p>
-    <p>This verifies authentication and persistence only. Product features are not available.</p>
+  return <><h1>Your weekend</h1><p>Signed in as {session.user.email || 'authenticated user'}.</p>
+    <p>Read your persisted Weekend Packet below.</p>
     {!current && <p role="status">Checking API connectivity…</p>}
     {current?.error && <p role="alert">{current.error} You can retry or sign out and sign in again.</p>}
     {current?.me && <section aria-label="Backend identity"><h2>Backend connection</h2><p>API connectivity: confirmed</p><p>Backend identity: {current.me.id}</p><p>Database roundtrip: {current.me.database_roundtrip ? 'confirmed' : 'not confirmed'}</p></section>}
+    {current?.me && <PacketView key={session.user.id} client={client} session={session} />}
     {current?.error && <button onClick={() => { setResult(null); setAttempt(value => value + 1) }}>Retry API</button>}
     <button disabled={busy} onClick={logout}>{busy ? 'Signing out…' : 'Sign out'}</button>
     {logoutError && <p role="alert">{logoutError}</p>}

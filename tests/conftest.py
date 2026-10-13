@@ -39,6 +39,10 @@ def database(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine, Config]]
                 "user_context_revisions",
                 "curation_jobs",
                 "weekend_packets",
+                "delivery_bindings",
+                "delivery_challenges",
+                "delivery_intents",
+                "delivery_attempts",
                 "alembic_version",
             }
         # The URL and live identity guards precede every destructive test migration.

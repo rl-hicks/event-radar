@@ -277,7 +277,7 @@ def test_local_target_denied_and_wrong_migration_rejected(worker, tmp_path, monk
     with Session(deps.engine) as session:
         assert (
             session.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0004_weekend_packets"
+            == "0005_packet_delivery"
         )
     with deps.engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num = 'unapproved_revision'"))
@@ -287,5 +287,5 @@ def test_local_target_denied_and_wrong_migration_rejected(worker, tmp_path, monk
     finally:
         with deps.engine.begin() as connection:
             connection.execute(
-                text("UPDATE alembic_version SET version_num = '0004_weekend_packets'")
+                text("UPDATE alembic_version SET version_num = '0005_packet_delivery'")
             )

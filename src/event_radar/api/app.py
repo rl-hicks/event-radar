@@ -16,6 +16,7 @@ from starlette.responses import Response
 from event_radar.api.config import web_origins
 from event_radar.api.contexts import router as context_router
 from event_radar.api.cors import ProductCORSMiddleware
+from event_radar.api.delivery import router as delivery_router
 from event_radar.api.dependencies import DatabaseResources
 from event_radar.api.errors import DatabaseUnavailable, error_response
 from event_radar.api.packets import router as packet_router
@@ -98,7 +99,7 @@ def create_app() -> FastAPI:
         except Exception:
             # Do not log exception strings, traceback locals, bodies, or headers.
             response = error_response(request, 500, "internal_error", "Internal server error.")
-        if request.url.path.startswith("/api/me/packets"):
+        if request.url.path.startswith(("/api/me/packets", "/api/me/delivery")):
             response.headers["Cache-Control"] = "no-store"
         route = request.scope.get("route")
         # Route templates avoid logging arbitrary secret-bearing paths or query strings.
@@ -120,6 +121,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(context_router)
     app.include_router(packet_router)
+    app.include_router(delivery_router)
     # Outer CORS middleware also applies to sanitized error responses.
     app.add_middleware(ProductCORSMiddleware, origins=web_origins())
     return app

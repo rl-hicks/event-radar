@@ -28,6 +28,10 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
             "user_context_revisions",
             "curation_jobs",
             "weekend_packets",
+            "delivery_bindings",
+            "delivery_challenges",
+            "delivery_intents",
+            "delivery_attempts",
             "alembic_version",
         }
         columns = {column["name"]: column for column in inspector.get_columns("app_users")}
@@ -42,7 +46,7 @@ def test_migration_roundtrip_and_metadata(database: tuple[Engine, Config]) -> No
             assert columns[name]["default"] == "now()"
         with engine.connect() as connection:
             context = MigrationContext.configure(connection, opts={"compare_server_default": True})
-            assert context.get_current_revision() == "0004_weekend_packets"
+            assert context.get_current_revision() == "0005_packet_delivery"
             assert compare_metadata(context, Base.metadata) == []
         command.downgrade(config, "base")
         inspector = inspect(engine)

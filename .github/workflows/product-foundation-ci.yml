@@ -113,6 +113,16 @@ jobs:
                   "test_empty_packet_unknown_usage_and_independent_history",
               )
           })
+          required.update({
+              ("tests.test_packet_delivery_integration", name)
+              for name in (
+                  "test_current_selection_context_partial_missing_and_week_boundary",
+                  "test_prompt_evolution_preserves_historical_validation",
+                  "test_concurrent_delivery_intents_and_single_use_challenge",
+                  "test_authenticated_binding_api_isolation_and_no_store",
+                  "test_revocation_blocks_queued_delivery_and_changed_revision",
+              )
+          })
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()

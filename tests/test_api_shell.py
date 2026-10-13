@@ -59,6 +59,7 @@ def test_api_import_and_lifespan_are_independent_of_private_runtime(tmp_path: Pa
             "user_context_revisions",
             "curation_jobs",
             "weekend_packets",
+            "delivery_bindings", "delivery_challenges", "delivery_intents", "delivery_attempts",
         }
         app = create_app()
         assert app.state.database._engine is None

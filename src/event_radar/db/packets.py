@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from event_radar.db.models import CurationJob, UserContextRevision, WeekendPacketRecord
 from event_radar.db.regional import read_regional_snapshot
-from event_radar.models.packet_validation import PROMPT, validate_result
+from event_radar.models.packet_validation import historical_validator
 from event_radar.models.product_context import ContextRevision, ProductUserContext
 from event_radar.models.weekend_packet import (
     CurationResult,
@@ -58,11 +58,14 @@ def read_packet(session: Session, authenticated_id: UUID, packet_id: UUID) -> We
             context=revision,
             policy=packet.policy,
         )
+        validator = historical_validator(
+            packet.policy.version, packet.policy.prompt_version, packet.prompt_hash
+        )
         expected_identity = digest(
             {
                 "account": str(authenticated_id),
                 "request": request.model_dump(mode="json"),
-                "prompt_hash": digest(PROMPT),
+                "prompt_hash": packet.prompt_hash,
             }
         )
         if (
@@ -80,7 +83,6 @@ def read_packet(session: Session, authenticated_id: UUID, packet_id: UUID) -> We
             or packet.weekend_friday != snapshot.universe.scope.window.friday
             or packet.research_as_of != snapshot.universe.scope.as_of
             or packet.research_quality != snapshot.quality_status
-            or packet.prompt_hash != digest(PROMPT)
             or packet.created_at != row.created_at
             or packet.status != job.status
             or job.user_id != authenticated_id
@@ -99,7 +101,7 @@ def read_packet(session: Session, authenticated_id: UUID, packet_id: UUID) -> We
             )
         ):
             raise ValueError
-        rebuilt = validate_result(
+        rebuilt = validator(
             request,
             CurationResult(
                 status=packet.curation_status,

@@ -22,5 +22,12 @@ class ProductCORSMiddleware:
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        middleware = self.context if scope.get("path") == "/api/me/context" else self.read_only
+        middleware = (
+            self.context
+            if (
+                scope.get("path") == "/api/me/context"
+                or scope.get("path", "").startswith("/api/me/delivery/")
+            )
+            else self.read_only
+        )
         await middleware(scope, receive, send)

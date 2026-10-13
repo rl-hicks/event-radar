@@ -30,7 +30,7 @@ it.each([['/', 'Event Radar'], ['/login', 'Sign in'], ['/signup', 'Create accoun
 it('protects app while resolving and after missing session', async () => {
   const { emit, fetch } = setup('/app', null, true)
   expect(screen.getByRole('status')).toHaveTextContent('Restoring session')
-  expect(screen.queryByText('E0 authenticated foundation')).not.toBeInTheDocument()
+  expect(screen.queryByText('Your weekend')).not.toBeInTheDocument()
   act(() => emit(null))
   expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   expect(fetch).not.toHaveBeenCalled()
@@ -39,7 +39,7 @@ it('bounds session restoration without exposing protected content', () => {
   vi.useFakeTimers(); setup('/app', null, true)
   act(() => vi.advanceTimersByTime(10000))
   expect(screen.getByRole('alert')).toHaveTextContent('Session could not be loaded')
-  expect(screen.queryByText('E0 authenticated foundation')).not.toBeInTheDocument()
+  expect(screen.queryByText('Your weekend')).not.toBeInTheDocument()
 })
 it.each(['/app?user_id=other-user&email=other@example.test', '/login'])('uses authenticated API identity at %s', async path => {
   const { fetch } = setup(path, session)
@@ -70,7 +70,7 @@ it('session removal clears protected content including pending API results', asy
   const { emit, fetch } = setup('/app', session)
   let resolve: (value: unknown) => void = () => {}
   fetch.mockImplementation(() => new Promise(done => { resolve = done }))
-  await screen.findByRole('heading', { name: 'E0 authenticated foundation' })
+  await screen.findByRole('heading', { name: 'Your weekend' })
   act(() => emit(null))
   await act(async () => resolve({ ok: true, json: async () => ({ id: 'stale', email: null, created_at: '', database_roundtrip: true }) }))
   expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
@@ -79,7 +79,7 @@ it('session removal clears protected content including pending API results', asy
 it('signup requiring confirmation stays unauthenticated', async () => {
   setup('/signup'); await fill('Create account')
   expect(await screen.findByRole('status')).toHaveTextContent('You are not signed in yet')
-  expect(screen.queryByText('E0 authenticated foundation')).not.toBeInTheDocument()
+  expect(screen.queryByText('Your weekend')).not.toBeInTheDocument()
 })
 it('signup with immediate session enters app', async () => {
   const { auth, emit } = setup('/signup')
