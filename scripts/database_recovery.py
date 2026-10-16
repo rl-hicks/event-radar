@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -90,6 +91,21 @@ def structure(connection):
     return result
 
 
+@contextmanager
+def read_snapshot(service):
+    # Autocommit prevents an implicit BEGIN before this explicit outer transaction.
+    # Psycopg applies these characteristics to connection.transaction()'s BEGIN.
+    with psycopg.connect(service=service, autocommit=True) as connection:
+        connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        connection.read_only = True
+        with connection.transaction():
+            isolation = connection.execute("SHOW transaction_isolation").fetchone()[0]
+            read_only = connection.execute("SHOW transaction_read_only").fetchone()[0]
+            if (isolation, read_only) != ("repeatable read", "on"):
+                raise RuntimeError("Recovery transaction characteristics mismatch")
+            yield connection
+
+
 def capture(service, directory, pg_dump="pg_dump"):
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", service):
         raise ValueError("Use a named libpq service, never a connection URL")
@@ -98,8 +114,7 @@ def capture(service, directory, pg_dump="pg_dump"):
     directory.mkdir(mode=0o700, parents=False, exist_ok=False)
     os.chmod(directory, 0o700)
     # Exclusive destination and missing manifest distinguish interrupted bundles.
-    with psycopg.connect(service=service) as connection:
-        connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    with read_snapshot(service) as connection:
         if connection.info.server_version // 10000 != 17:
             raise RuntimeError("Reviewed PostgreSQL 17 source required")
         snapshot = connection.execute("SELECT pg_export_snapshot()").fetchone()[0]
@@ -191,8 +206,7 @@ def check_bundle(directory):
 
 def verify_restored(service, directory):
     manifest = check_bundle(directory)
-    with psycopg.connect(service=service) as connection:
-        connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    with read_snapshot(service) as connection:
         if structure(connection) != manifest["structure"]:
             raise RuntimeError("Restored application structure/security comparison failed")
         if inventory(connection) != manifest["inventory"]:

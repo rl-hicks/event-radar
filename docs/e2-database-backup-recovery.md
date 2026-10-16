@@ -32,7 +32,25 @@ the separately authorized existing backup administrator and stop on denied reads
 The proposed operator must prove read access to all required Auth tables.
 
 `scripts/database_recovery.py capture` uses one exported repeatable-read snapshot
-for both dumps and all private row comparisons. It captures:
+for both dumps and all private row comparisons. Capture and restoration
+verification open an autocommit connection, set Psycopg's REPEATABLE_READ/read_only
+characteristics, and enter an explicit `connection.transaction()` context before
+any recovery queries. Both paths fail closed unless PostgreSQL reports
+`transaction_isolation = repeatable read` and `transaction_read_only = on`.
+Capture keeps that transaction open through both pg_dump calls, passing the same
+exported snapshot to each. Verification's catalog, row and revision reads share
+one transaction too. See [Psycopg transaction contexts and characteristics](https://www.psycopg.org/psycopg3/docs/basic/transactions.html).
+
+The deterministic PostgreSQL regression commits synthetic app/Auth changes from
+a second connection before capture inventory, between archives, and between
+verification catalog/row reads. It checks server characteristics, read-only write
+rejection, matching dump snapshot arguments, restored pre-change data, fresh-reader
+change detection and absence of an already-active-transaction warning. The earlier
+raw-BEGIN path still produced consistent results on the tested PostgreSQL 17.11,
+but issued that warning; this correction removes reliance on nested BEGIN handling.
+No prior hosted backup inconsistency is claimed.
+
+The capture bundle contains:
 
 - `public.dump`: application schema/data, Alembic revision, constraints, policies,
   triggers, functions, ownership, ACLs and applicable public default privileges.

@@ -151,6 +151,8 @@ jobs:
               ("tests.test_database_recovery", f"test_synthetic_backup_restore[{revision}]")
               for revision in ("0001_app_users", "head")
           })
+          required.add(("tests.test_database_recovery",
+                        "test_snapshot_consistency_under_concurrent_change"))
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")
           passed = set()
