@@ -57,6 +57,14 @@ jobs:
         run: |
           docker compose -f docker-compose.test.yml ps
           docker compose -f docker-compose.test.yml exec -T postgres_test pg_isready -U event_radar_test -d event_radar_test
+      - name: PostgreSQL 17 recovery clients from the test image
+        run: |
+          mkdir -p "$RUNNER_TEMP/pg17"
+          container=$(docker compose -f docker-compose.test.yml ps -q postgres_test)
+          docker cp "$container:/usr/lib/postgresql/17/bin/pg_dump" "$RUNNER_TEMP/pg17/pg_dump"
+          docker cp "$container:/usr/lib/postgresql/17/bin/pg_restore" "$RUNNER_TEMP/pg17/pg_restore"
+          echo "RECOVERY_PG_BIN=$RUNNER_TEMP/pg17" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/pg17/pg_dump" --version
       - name: Complete Python suite with PostgreSQL
         run: uv run pytest -ra --junitxml="$RUNNER_TEMP/python-results.xml"
       - name: Isolated durable evidence restart regression
@@ -138,6 +146,10 @@ jobs:
                   "test_non_superuser_migration_executor",
                   "test_nonowner_api_curation_delivery_and_worker",
               )
+          })
+          required.update({
+              ("tests.test_database_recovery", f"test_synthetic_backup_restore[{revision}]")
+              for revision in ("0001_app_users", "head")
           })
           allowed_skip = ("tests.test_supabase_integration", "test_real_supabase_users")
           cases = ET.parse(os.environ["TEST_REPORT"]).getroot().iter("testcase")

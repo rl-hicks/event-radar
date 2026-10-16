@@ -1,21 +1,7 @@
--- PREPARED ONLY; execute each creator block with independently authorized authority.
--- Only needed if the migration executor cannot ALTER DEFAULT PRIVILEGES for that creator.
--- Do not grant supabase_admin membership merely to bypass a permission error.
--- Global defaults affecting other schemas require separate review, not this script.
-BEGIN;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  REVOKE ALL ON FUNCTIONS FROM PUBLIC, anon, authenticated;
-COMMIT;
-
-BEGIN;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON FUNCTIONS FROM PUBLIC, anon, authenticated;
-COMMIT;
+-- RETIRED: provider defaults are outside Event Radar migration authority.
+-- Do not execute the former postgres/supabase_admin REVOKE blocks.
+-- 0006 explicitly hardens existing application objects and only configures
+-- event_radar_migrator defaults (global AND public-schema scope).
+-- Provider-created future objects can still receive browser grants. All future
+-- Event Radar DDL must SET ROLE event_radar_migrator before object creation.
+-- Inspect provider defaults read-only using inspect_access.sql; do not change them.

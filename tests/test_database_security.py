@@ -245,7 +245,7 @@ def test_e0_upgrade_preservation_and_effective_permissions(database):
             c.execute(text("CREATE TABLE security_probe(id int)"))
             c.execute(text("CREATE SEQUENCE security_probe_seq"))
             for client in ("anon", "authenticated"):
-                assert not c.scalar(
+                assert c.scalar(
                     text(
                         "SELECT "
                         "has_table_privilege(:r,'security_probe','SELECT,INSERT,UPDATE,DELETE') OR "
@@ -269,8 +269,12 @@ def test_failed_upgrade_keeps_quarantined_e0(database, failure):
             c.execute(text("GRANT event_radar_migrator TO anon"))
     if failure == "global_default":
         with engine.begin() as c:
+            c.execute(text("GRANT postgres TO anon"))
             c.execute(
-                text("ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT SELECT ON TABLES TO anon")
+                text(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE event_radar_migrator "
+                    "GRANT SELECT ON TABLES TO postgres"
+                )
             )
 
     if failure == "database_create":
@@ -302,10 +306,12 @@ def test_failed_upgrade_keeps_quarantined_e0(database, failure):
             if failure == "inherited":
                 c.execute(text("REVOKE event_radar_migrator FROM anon"))
             if failure == "global_default":
+                c.execute(text("REVOKE postgres FROM anon"))
                 c.execute(
                     text(
-                        "ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE SELECT ON TABLES "
-                        "FROM anon"
+                        "ALTER DEFAULT PRIVILEGES FOR ROLE event_radar_migrator "
+                        "REVOKE SELECT ON TABLES "
+                        "FROM postgres"
                     )
                 )
             if failure == "database_create":
@@ -453,13 +459,10 @@ def test_separately_administered_provider_defaults(database):
     engine, config = database
     seed_e0(engine, config)
     quarantine(engine)
-    sql = (ROOT / "sql/security/provider_defaults.sql").read_text()
-    with engine.begin() as c:
-        c.execute(text(sql.replace("BEGIN;", "").replace("COMMIT;", "")))
 
     def reject_provider_administration(conn, cursor, statement, parameters, context, executemany):
         if statement.startswith("ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin"):
-            raise AssertionError("Already-clean provider defaults must not need authority again")
+            raise AssertionError("Provider defaults must never require administration")
 
     event.listen(engine, "before_cursor_execute", reject_provider_administration)
     try:
@@ -475,11 +478,21 @@ def test_non_superuser_migration_executor(database):
     engine, config = database
     _, before = seed_e0(engine, config)
     quarantine(engine)
+    with engine.begin() as c:
+        c.execute(
+            text("ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin GRANT SELECT ON TABLES TO anon")
+        )
+        for scope in ("", " IN SCHEMA public"):
+            for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
+                c.execute(
+                    text(
+                        f"ALTER DEFAULT PRIVILEGES FOR ROLE event_radar_migrator{scope} "
+                        f"GRANT ALL ON {kind} TO anon,authenticated"
+                    )
+                )
     password = secrets.token_hex(24)
     login = "event_radar_bootstrap_test"
     with engine.begin() as c:
-        sql = (ROOT / "sql/security/provider_defaults.sql").read_text()
-        c.execute(text(sql.replace("BEGIN;", "").replace("COMMIT;", "")))
         c.execute(
             text(
                 f"CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS "
@@ -504,8 +517,32 @@ def test_non_superuser_migration_executor(database):
                     )
                 ).one()
             )
+            assert not c.scalar(text("SELECT pg_has_role(current_user,'supabase_admin','MEMBER')"))
+            defaults = c.execute(
+                text(
+                    "SELECT * FROM pg_default_acl WHERE defaclrole="
+                    "(SELECT oid FROM pg_roles WHERE rolname='supabase_admin') ORDER BY oid"
+                )
+            ).all()
+            with pytest.raises(DBAPIError):
+                with c.begin_nested():
+                    c.execute(
+                        text(
+                            "ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin "
+                            "IN SCHEMA public REVOKE ALL ON TABLES FROM anon"
+                        )
+                    )
             config.attributes["connection"] = c
             command.upgrade(config, "head")
+            assert (
+                c.execute(
+                    text(
+                        "SELECT * FROM pg_default_acl WHERE defaclrole="
+                        "(SELECT oid FROM pg_roles WHERE rolname='supabase_admin') ORDER BY oid"
+                    )
+                ).all()
+                == defaults
+            )
             assert c.execute(text("SELECT * FROM app_users ORDER BY id")).all() == before
             assert (
                 c.scalar(text("SELECT version_num FROM alembic_version"))

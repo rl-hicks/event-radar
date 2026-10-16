@@ -1,6 +1,6 @@
 # E2 database security remediation — prepared, not applied
 
-Baseline E2 SHA: `51355c7fad3cfc0b60241b1a88cb660cd41f683b`. Target revision: `0006_hosted_access_hardening`, additive after unchanged revisions 0001–0005. Final implementation SHA and exact-head CI are in the handoff. E1 remains at `26b454f41c3513de29f8e3a2bdada5f82185e421`, draft/unmerged, with weekly activation pending. Accepted governance and product scope are unchanged. No hosted operation was executed in this assignment.
+Baseline E2 SHA: `f0915c196427fa0a740477733ae1b7b2a6dcfdd7`. Target revision: `0006_hosted_access_hardening`, additive after unchanged revisions 0001–0005. Final implementation SHA and exact-head CI are in the handoff. E1 remains at `26b454f41c3513de29f8e3a2bdada5f82185e421`, draft/unmerged, with weekly activation pending. Accepted governance and product scope are unchanged. No hosted operation was executed in this assignment.
 
 ## Observed risk and authority
 
@@ -52,7 +52,7 @@ Schema public: runtime gets USAGE only; CREATE is revoked from PUBLIC, browser a
 - 0003 enables context RLS and revokes PUBLIC, but direct/inherited client grants and trigger function EXECUTE need comprehensive review. Append-only trigger remains.
 - 0004 protects curation/packet tables and direct browser ACLs, with immutable/claim triggers, but gives no non-owner runtime policy. Existing immutable behavior is retained.
 - 0005 does similarly for binding/challenge/outbox/audit tables. New column grants permit only existing lifecycle transitions; triggers remain decisive.
-- 0006 revokes table and column ACLs (table revocation alone does not remove column grants), enables RLS on all tables, installs role-specific policies, narrows grants, hardens application functions/defaults and transfers ownership to the dedicated migrator. Unknown policies, unsafe existing role attributes/parent memberships, global client defaults or effective inherited client access fail the transaction. Historical migrations remain byte-for-byte unchanged.
+- 0006 revokes table and column ACLs (table revocation alone does not remove column grants), enables RLS on all tables, installs role-specific policies, narrows grants, hardens application functions/defaults and transfers ownership to the dedicated migrator. Unknown policies, unsafe existing role attributes/parent memberships, effective migrator client defaults or effective inherited client access fail the transaction. Historical migrations remain byte-for-byte unchanged.
 
 ## Defaults and transaction decisions
 
@@ -60,13 +60,24 @@ Contain E0 first with separately approved `sql/security/quarantine_e0.sql`. It p
 
 Then upgrade 0001 → 0006 in one PostgreSQL transaction, not one invocation per intermediate revision. `alembic/env.py` explicitly disables per-revision transactions and accepts an operator/test-owned outer connection. 0002–0005's intermediate broad defaults cannot become externally visible before 0006 hardens them. Injected late failures prove rollback of tables, ACLs, ownership, role/default changes and revision advancement, with the committed quarantine and both user rows preserved. Initial migration holds locks: schedule maintenance and bound lock/statement timeouts.
 
-Schema-level table/sequence/function defaults for current migration executor, postgres and supabase_admin are stripped of PUBLIC/browser/runtime grants where present. If the executor cannot change a provider role's ACL, stop; the specifically authorized administrator can run the relevant block of `provider_defaults.sql` separately. The migration skips an already-clean schema ACL, allowing independent administration without granting supabase_admin membership. It never silently ignores a dirty inaccessible ACL.
+The unexecuted 0006 now administers only event_radar_migrator defaults, at
+both global and public-schema scopes. postgres and supabase_admin defaults remain
+byte-for-byte unchanged, even when they include global browser grants. Existing
+application tables/columns/functions are secured explicitly in the atomic upgrade.
+Provider defaults are not inherited when creating as the migrator, nor applied
+again on ownership transfer. No provider-role membership is needed. The former
+provider_defaults.sql operational blocks are retired.
 
-Per-schema revocation cannot cancel global defaults. Unexpected global browser table/sequence grants or direct global browser routine grants stop the migration for review. PostgreSQL's normal global PUBLIC EXECUTE for provider-created functions is not revoked globally because that could affect managed schemas. Existing application functions are explicitly private; **future Event Radar DDL must run as event_radar_migrator**, whose global defaults are private for tables, sequences and functions. That new role is application-only; changing its global defaults does not change provider-owned schema behavior. Public-schema default changes necessarily affect future objects by those creators in public; confirm this project has no unrelated public-schema consumers before approval. Do not extrapolate that this secures every provider function or schema.
+Residual risk: objects subsequently created as a provider role can still receive
+browser privileges. Future application migrations must SET ROLE to the dedicated
+migrator before CREATE. The package makes no provider-wide security claim. A
+schema-local revoke cannot defeat global grants; global revocation also does not
+remove schema-local additions. Both are revoked for the app-only migrator, with
+an effective inherited-default check that fails closed on remaining grants.
 
 ## Verification and compatibility
 
-The guarded port-55432 PostgreSQL fixture simulates anon/authenticated, postgres/supabase_admin defaults, E0 state, two synthetic users and column-level exposure. It checks all twelve tables, seven triggers, constraints, RLS, owner identities, effective table/column privileges, client read/insert/update/delete/truncate rejection and migration/DDL denial. Future table/sequence defaults are checked under both provider creator roles; dedicated-migrator table/sequence/function defaults are checked separately.
+The guarded port-55432 PostgreSQL fixture simulates anon/authenticated, postgres/supabase_admin defaults, E0 state, two synthetic users and column-level exposure. It checks all twelve tables, seven triggers, constraints, RLS, owner identities, effective table/column privileges, client read/insert/update/delete/truncate rejection and migration/DDL denial. Unchanged future browser table/sequence access is demonstrated under provider creator roles; dedicated-migrator table/sequence/function defaults are checked separately.
 
 A separate real LOGIN inherits the API capability with no privileged memberships; it creates/readbacks contexts, runs fake AI #3 claims and packet persistence, verifies signed-JWT two-account API isolation, binds a synthetic private destination, queues/sends through a fake transport and revokes it. It cannot SET ROLE to the migrator or test administrator. Immutable context/packet triggers are also tested with the owner. A separate research LOGIN performs regional persistence and the actual E1 worker orchestration/replay with synthetic dependencies. No upstream/live collection or provider calls occur. Tests fail if run against a hosted URL; every destructive fixture retains the existing database identity/URL guards.
 
@@ -78,4 +89,27 @@ See the final handoff for focused/full counts and exact-head CI. Existing connec
 
 ## Local verification result
 
-Nine focused security cases pass, including the real non-superuser migration executor. Full Python/PostgreSQL suite: **869 passed, one expected hosted-Supabase opt-in skip**. Frontend: **57 passed**. Ruff format/lint, mypy (111 source files), frontend lint/typecheck/build/security baseline and isolated E1 evidence restart pass. The new nine cases are mandatory non-skipped evidence in Product Foundation CI. The final handoff records the pushed SHA and exact-head CI result. No hosted data preservation result is claimed; the two unchanged rows in the migration proof are synthetic.
+The original nine security cases are retained, with provider-default assertions corrected to the application-only boundary. Two mandatory synthetic recovery cases cover both 0001 and 0006, private full-row comparisons, Auth identity links, catalog/ACL/RLS/trigger preservation, corrupt/incomplete bundles and failed restoration. Final focused/full counts and exact-head CI are recorded in the handoff. Ruff format/lint, mypy (111 source files), frontend lint/typecheck/build/security baseline and isolated E1 evidence restart pass. All eleven security/recovery cases are mandatory non-skipped evidence in Product Foundation CI. The final handoff records the pushed SHA and exact-head CI result. No hosted data preservation result is claimed; the two unchanged rows in the migration proof are synthetic.
+
+## Compatibility correction and recovery status
+
+Supplied hosted constraints: Free organization, PostgreSQL 17.11, approximately
+11 MB, two existing users, E0 revision, no unrelated public objects, postgres
+CREATEROLE/E0 ownership authority but no supabase_admin membership. These remain
+lead observations, not new hosted verification. The role/privilege matrix above is
+unchanged. Bootstrap application-role INHERIT/SET membership remains a hosted
+checkpoint; tests explicitly reject provider default alteration by a real
+non-superuser and preserve the provider's global and schema defaults.
+
+[Backup/recovery procedure](e2-database-backup-recovery.md): implemented and
+synthetically exercised using PostgreSQL 17.11. No actual hosted backup completed;
+no actual hosted recovery verified. Provider Auth schema/version, encryption-key
+portability, app-role grant authority, and custom-login session-pooler connectivity
+require separately authorized hosted verification. Render secret cutover and
+deployment remain downstream approvals. Neither E1 nor E2 is complete.
+
+Local correction verification: **871 passed, one expected hosted opt-in skip**;
+**57 frontend tests passed**. All nine security and both backup/restore cases pass.
+The complete CI workflow also requires static checks, CLI/Alembic metadata,
+frontend build/security and isolated evidence restart. Exact final-head GitHub CI
+is reported in the final handoff, not inferred from these local results.

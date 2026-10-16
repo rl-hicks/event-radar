@@ -88,48 +88,30 @@ def upgrade() -> None:
     op.execute(f"REVOKE CREATE ON SCHEMA public FROM {grantees}")
     op.execute(f"GRANT USAGE ON SCHEMA public TO {API}, {WORKER}, {OWNER}")
     op.execute(f"GRANT CREATE ON SCHEMA public TO {OWNER}")
-    # Schema-scoped defaults for known creators only. Permission failure rolls back everything;
-    # a provider administrator must perform inaccessible supabase_admin changes separately.
-    creators = set(
-        connection.scalars(
-            sa.text("SELECT rolname FROM pg_roles WHERE rolname IN ('postgres','supabase_admin')")
-        )
-    ) | {connection.scalar(sa.text("SELECT current_user")), OWNER}
-    for creator in sorted(creators):
-        if creator != OWNER and connection.scalar(
+    # Only the dedicated application creator is administered. Provider defaults do
+    # not follow an object on ownership transfer and are not inherited at creation.
+    # Revoke BOTH global and schema-local grants: schema revokes cannot override
+    # global grants, while global revokes cannot remove schema-local additions.
+    for scope in ("", " IN SCHEMA public"):
+        for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
+            op.execute(
+                f"ALTER DEFAULT PRIVILEGES FOR ROLE {OWNER}{scope} "
+                f"REVOKE ALL ON {kind} FROM {grantees}"
+            )
+    # Remaining grants via another role would also expose future objects. Do not
+    # revoke unrelated grantees; reject the conflict for independent review.
+    for client in (*clients, API, WORKER):
+        if connection.scalar(
             sa.text(
                 "SELECT EXISTS(SELECT FROM pg_default_acl d, aclexplode(d.defaclacl) a "
-                "WHERE d.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=:creator) "
-                "AND d.defaclnamespace=0 AND (d.defaclobjtype IN ('r','S') "
-                "OR a.grantee<>0) AND (a.grantee=0 OR a.grantee IN "
-                "(SELECT oid FROM pg_roles WHERE rolname IN ('anon','authenticated'))))"
+                "WHERE d.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=:owner) "
+                "AND d.defaclnamespace IN (0,'public'::regnamespace) "
+                "AND d.defaclobjtype IN ('r','S','f') AND "
+                "(a.grantee=0 OR pg_has_role(:client,a.grantee,'USAGE')))"
             ),
-            {"creator": creator},
+            {"owner": OWNER, "client": client},
         ):
-            raise RuntimeError("Global client defaults require separate administrative review")
-        quoted = connection.dialect.identifier_preparer.quote(creator)
-        for kind, object_type in (("TABLES", "r"), ("SEQUENCES", "S"), ("FUNCTIONS", "f")):
-            needs_revoke = connection.scalar(
-                sa.text(
-                    "SELECT EXISTS(SELECT FROM pg_default_acl d, aclexplode(d.defaclacl) a "
-                    "WHERE d.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=:creator) "
-                    "AND d.defaclnamespace='public'::regnamespace AND d.defaclobjtype=:kind "
-                    "AND (a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE rolname "
-                    "IN ('anon','authenticated','event_radar_api','event_radar_research'))))"
-                ),
-                {"creator": creator, "kind": object_type},
-            )
-            if needs_revoke:
-                op.execute(
-                    f"ALTER DEFAULT PRIVILEGES FOR ROLE {quoted} IN SCHEMA public "
-                    f"REVOKE ALL ON {kind} FROM {grantees}"
-                )
-    # Per-schema revokes cannot cancel global function EXECUTE defaults. Only the dedicated
-    # app creator's global defaults are changed; provider roles' other schemas are untouched.
-    for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
-        op.execute(
-            f"ALTER DEFAULT PRIVILEGES FOR ROLE {OWNER} REVOKE ALL ON {kind} FROM {grantees}"
-        )
+            raise RuntimeError("Effective client defaults require independent review")
     for table in TABLES:
         op.execute(f"REVOKE ALL ON TABLE public.{table} FROM {grantees}")
         # Table ACL revocation does not remove pre-existing column grants.
